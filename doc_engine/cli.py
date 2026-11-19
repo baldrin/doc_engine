@@ -59,9 +59,34 @@ async def cmd_db(cfg: Section, args: argparse.Namespace) -> int:
     return 0
 
 
+async def _tables_missing(db: Db) -> bool:
+    """True, with a message, when `db init` has not been run."""
+    if await missing_tables(db):
+        print("the database is not set up. Run `python -m doc_engine db init` first.")
+        return True
+    return False
+
+
+def _pairs(items: list[str], flag: str, bare_ok: bool = False) -> dict[str, str]:
+    """Parse repeated "Name=value" arguments. A malformed one is refused, not dropped."""
+    out: dict[str, str] = {}
+    for it in items:
+        if "=" not in it:
+            if bare_ok:
+                continue
+            raise ValueError(f"{flag} \"{it}\" is not in the form \"Name=value\"")
+        k, v = it.split("=", 1)
+        if not k.strip():
+            raise ValueError(f"{flag} \"{it}\" has no name before the = sign")
+        out[k.strip()] = v
+    return out
+
+
 async def cmd_samples(cfg: Section, args: argparse.Namespace) -> int:
     db = Db(cfg)
     try:
+        if await _tables_missing(db):
+            return 1
         print("building sample flows and documents (the 150-page document takes a few seconds)...")
         made = await samples.install_samples(db, cfg, force=args.force)
         print(f"created {made['flows']} flow(s) and {made['documents']} document(s)")
@@ -77,6 +102,8 @@ async def cmd_samples(cfg: Section, args: argparse.Namespace) -> int:
 async def cmd_jobs(cfg: Section, args: argparse.Namespace) -> int:
     db = Db(cfg)
     try:
+        if await _tables_missing(db):
+            return 1
         rows = await db.fetch(
             """SELECT j.job_id, j.flow_name, j.document_name, j.priority, j.state, j.submitted_at,
                       extract(epoch FROM coalesce(j.finished_at, clock_timestamp()) - j.submitted_at) AS wall_s,
@@ -152,11 +179,14 @@ async def cmd_load(cfg: Section, args: argparse.Namespace) -> int:
     from .worker import Worker
     db = Db(cfg)
     try:
-        miss = await missing_tables(db)
-        if miss:
-            print("the database is not set up. Run `python -m doc_engine db init` first.")
+        if await _tables_missing(db):
             return 1
-        await sync_models(db, cfg)
+        total_jobs = args.jobs + args.bulk
+        if args.jobs < 0 or args.bulk < 0 or total_jobs < 1 or total_jobs > planner.MAX_JOBS_PER_SUBMIT:
+            print(f"submit between 1 and {planner.MAX_JOBS_PER_SUBMIT} jobs at a time (--jobs plus --bulk)")
+            return 1
+        if not args.dry_run:                  # a dry run reads only
+            await sync_models(db, cfg)
         flow = await db.fetchone("SELECT * FROM flows WHERE flow_id = %s", (args.flow,))
         if not flow:
             print("flow not found. Run `python -m doc_engine samples` and use the ids it prints.")
@@ -167,7 +197,11 @@ async def cmd_load(cfg: Section, args: argparse.Namespace) -> int:
         which = (f"v{run['version']}, {'published' if run['published'] else 'latest saved version, not published'}"
                  if run["version"] else "draft, no version saved")
         # --document ID (used for every source), or --document "Source name=ID" once per source
-        by_source = dict(d.split("=", 1) for d in args.document if "=" in d)
+        try:
+            by_source = _pairs(args.document, "--document", bare_ok=True)
+        except ValueError as e:
+            print(e)
+            return 1
         default_id = next((d for d in args.document if "=" not in d), None)
         try:
             documents = await planner.resolve_documents(db, flow["graph"], by_source, default_id)
@@ -175,15 +209,16 @@ async def cmd_load(cfg: Section, args: argparse.Namespace) -> int:
             print(f"{e}. Run `python -m doc_engine samples` and use the ids it prints.")
             return 1
         try:                                  # --value "Name=value", once per value input
-            values = flows.resolve_values(flow["graph"], dict(v.split("=", 1) for v in args.value if "=" in v),
+            values = flows.resolve_values(flow["graph"], _pairs(args.value, "--value"),
                                           int(cfg.worker.get("max_value_chars", 20000)))
         except ValueError as e:
             print(f"{e}\nGive values as --value \"Name=value\".")
             return 1
         rows = await db.fetch("SELECT * FROM profiles")
         est = flows.estimate(flow["graph"], {k: d["pages"] for k, d in documents.items()}, cfg, flow["flow_id"],
-                             {r["profile_key"]: r for r in rows})
-        total_jobs = args.jobs + args.bulk
+                             {r["profile_key"]: r for r in rows},
+                             keep_ratios=await planner.keep_ratios(db, flow["flow_id"]),
+                             page_tokens={k: float(d["page_tokens"]) for k, d in documents.items() if d.get("page_tokens")})
         print(f"flow: {flow['name']} ({which})   " + "   ".join(f"document: {d['name']} ({d['pages']} pages)" for d in documents.values()))
         if values:
             print("values: " + ", ".join(f"{k} = {flows.render_value(v)}" for k, v in values.items()))
@@ -258,9 +293,16 @@ async def cmd_load(cfg: Section, args: argparse.Namespace) -> int:
 async def cmd_worker(cfg: Section, args: argparse.Namespace) -> int:
     from .worker import Worker
     db = Db(cfg)
-    await sync_models(db, cfg)
-    w = Worker(cfg, db)
-    await w.start()
+    try:
+        if await _tables_missing(db):
+            await db.close()
+            return 1
+        await sync_models(db, cfg)
+        w = Worker(cfg, db)
+        await w.start()
+    except BaseException:
+        await db.close()
+        raise
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -269,15 +311,22 @@ async def cmd_worker(cfg: Section, args: argparse.Namespace) -> int:
         except NotImplementedError:
             pass
     print(f"worker {w.worker_id} running. Ctrl+C stops it cleanly.")
-    await stop.wait()
-    await w.stop()
-    await db.close()
+    try:
+        await stop.wait()
+        await w.stop()
+    finally:
+        await db.close()
     return 0
 
 
 async def cmd_export(cfg: Section, args: argparse.Namespace) -> int:
     db = Db(cfg)
     try:
+        if await _tables_missing(db):
+            return 1
+        if not await db.fetchone("SELECT 1 AS x FROM jobs WHERE job_id = %s", (args.job,)):
+            print(f"job not found: {args.job}. `python -m doc_engine jobs` lists recent job ids.")
+            return 1
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
         for table in ("jobs", "job_steps", "tasks", "calls", "events", "reservations"):

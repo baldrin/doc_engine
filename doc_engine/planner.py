@@ -412,6 +412,20 @@ async def fail_job(conn: psycopg.AsyncConnection, job_id: str, error: str, state
     await emit(conn, "job_cancelled" if state == "cancelled" else "job_failed", job_id=job_id, data={"error": error})
 
 
+MAX_JOBS_PER_SUBMIT = 50      # one request from the screen, or one `load` command
+
+
+async def keep_ratios(db: Db, flow_id: str | None) -> dict[str, float]:
+    """For each filter-fed step of a flow, the share of items kept in its latest run. Used by the estimate."""
+    if not flow_id:
+        return {}
+    rows = await db.fetch(
+        """SELECT DISTINCT ON (s.node_id) s.node_id, s.items_in, s.items_kept FROM job_steps s
+           JOIN jobs j USING (job_id) WHERE j.flow_id = %s AND s.items_kept IS NOT NULL AND s.items_in > 0
+           ORDER BY s.node_id, j.submitted_at DESC""", (flow_id,))
+    return {r["node_id"]: r["items_kept"] / r["items_in"] for r in rows}
+
+
 async def cancel_job(db: Db, job_id: str) -> None:
     async def go(conn: psycopg.AsyncConnection) -> None:
         await conn.execute("SELECT 1 FROM jobs WHERE job_id = %s FOR UPDATE", (job_id,))

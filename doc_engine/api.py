@@ -366,13 +366,7 @@ def create_app(cfg: Section) -> FastAPI:
                 pass
         profs = {r["profile_key"]: r for r in await db.fetch(
             "SELECT * FROM profiles WHERE profile_key LIKE %s", (f"{flow_id or 'adhoc'}:%",))}
-        ratios: dict[str, float] = {}
-        if flow_id:
-            for r in await db.fetch(
-                    """SELECT DISTINCT ON (s.node_id) s.node_id, s.items_in, s.items_kept FROM job_steps s
-                       JOIN jobs j USING (job_id) WHERE j.flow_id = %s AND s.items_kept IS NOT NULL AND s.items_in > 0
-                       ORDER BY s.node_id, j.submitted_at DESC""", (flow_id,)):
-                ratios[r["node_id"]] = r["items_kept"] / r["items_in"]
+        ratios = await planner.keep_ratios(db, flow_id)
         try:
             return J(flows.estimate(graph, pages, cfg, flow_id, profs, ratios, page_tokens))
         except Exception as e:   # an estimate must never break editing
@@ -465,8 +459,8 @@ def create_app(cfg: Section) -> FastAPI:
         if body.get("priority") == "bulk":
             n_int, n_bulk = 0, max(1, n_int)
         total = n_int + n_bulk
-        if total < 1 or total > 50:
-            raise ValueError("submit between 1 and 50 jobs at a time")
+        if n_int < 0 or n_bulk < 0 or total < 1 or total > planner.MAX_JOBS_PER_SUBMIT:
+            raise ValueError(f"submit between 1 and {planner.MAX_JOBS_PER_SUBMIT} jobs at a time")
         if total >= int(cfg.server.get("saturating_jobs", 4)) and not body.get("confirm_saturation"):
             return J({"error": "confirmation_required",
                       "message": f"{total} jobs at once can saturate the endpoint and slow other applications in the "
