@@ -22,7 +22,10 @@ export default function Flows() {
   };
   const remove = async (f: Flow) => {
     if (!window.confirm(`Delete "${f.name}"? Its past runs stay in Activity.`)) return;
-    await api(`/api/flows/${f.flow_id}`, { method: "DELETE" });
+    try {
+      await api(`/api/flows/${f.flow_id}`, { method: "DELETE" });
+      toast(`${f.name} deleted`);
+    } catch (e: any) { toast(e.message, true); }
     load();
   };
 
@@ -53,7 +56,7 @@ export default function Flows() {
               <p>{f.description || "No description."}</p>
               <div className="meta">
                 <span>{f.version ? `v${f.version}` : "Draft"}{!f.published_version ? "" : f.published_version === f.version ? " · Published" : ` · v${f.published_version} is published`}</span>
-                <span>{Math.max(0, (f.nodes || 0) - 1)} blocks</span>
+                <span>{f.nodes || 0} block{f.nodes === 1 ? "" : "s"}</span>
                 <span>{f.runs || 0} runs</span>
                 <span>Last run {fmtAgo(f.last_run)}</span>
               </div>

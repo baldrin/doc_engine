@@ -347,6 +347,9 @@ async def cmd_export(cfg: Section, args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if sys.version_info < (3, 11):
+        print(f"Document Engine needs Python 3.11 or newer. This is Python {sys.version.split()[0]}.")
+        return 1
     ap = argparse.ArgumentParser(prog="python -m doc_engine", description="Document Engine")
     ap.add_argument("--config", help="path to the config file (default: config.yaml, or DOC_ENGINE_CONFIG)")
     ap.add_argument("-v", "--verbose", action="store_true")

@@ -72,6 +72,15 @@ class Http:
     def post(self, path: str, json=None) -> Reply:  # noqa: A002
         return self._send("POST", path, body=json)
 
+    def upload(self, path: str, data: bytes, params: dict | None = None) -> Reply:
+        url = self.base + path + ("?" + urllib.parse.urlencode(params) if params else "")
+        req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/octet-stream"})
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                return Reply(r.status, r.read())
+        except urllib.error.HTTPError as e:
+            return Reply(e.code, e.read())
+
 
 def free_port() -> int:
     with socket.socket() as s:
@@ -221,9 +230,30 @@ def main() -> int:
         check(a.http.get("/api/health").json().get("ok") is True, "health reports a live worker")
         check(a.http.get("/").status_code == 200, "the screens are served")
 
+        # ---------------------------------------------------------------- flows and files
+        print("flows and files")
+        r = a.http.post("/api/flows/flow_sample_contract/versions")
+        check(r.status_code == 200 and r.json().get("unchanged") is True and r.json()["version"] == 1,
+              "saving a version with nothing changed makes no new version", r.text[:200])
+        new = a.http.post("/api/flows", json={"name": "e2e empty"}).json()
+        r = a.http.post(f"/api/flows/{new['flow_id']}/versions")
+        check(r.status_code == 400 and r.json().get("problems"), "a flow with errors cannot be saved as a version", r.text[:200])
+        g = a.http.get("/api/flows/flow_sample_medical").json()["graph"]
+        next(n for n in g["nodes"] if n["id"] == "classify")["data"]["max_tokens"] = 0
+        probs = a.http.post("/api/validate", json={"graph": g}).json()["problems"]
+        check(any("Max output tokens" in p["message"] for p in probs), "max output tokens of 0 is reported", str(probs)[:200])
+        r1 = a.http.upload("/api/documents", b"A short note.\nSecond line.", {"name": "e2e note.txt"})
+        r2 = a.http.upload("/api/documents", b"A short note.\nSecond line.", {"name": "e2e note.txt"})
+        check(r1.status_code == 200 and not r1.json().get("reused") and r2.json().get("reused") is True
+              and r1.json()["document_id"] == r2.json()["document_id"], "the same file uploaded twice is stored once")
+        r = a.http.upload("/api/documents", b"PK\x03\x04" + b"\x00" * 64 + b"notes.txt", {"name": "bundle.zip"})
+        check(r.status_code == 400 and "zip archive" in r.text, "a zip archive gets its own message", r.text[:200])
+        r = a.http.upload("/api/documents", b"PK\x03\x04" + b"\x00" * 26 + b"word/document.xml", {"name": "letter.bin"})
+        check(r.status_code == 400 and "office file" in r.text, "an office file is still named as one", r.text[:200])
+
         # ---------------------------------------------------------------- one job of each sample flow
         print("one job per sample flow")
-        flows_ = {f["flow_id"]: f["name"] for f in a.http.get("/api/flows").json()}
+        flows_ = {f["flow_id"]: f["name"] for f in a.http.get("/api/flows").json() if f.get("is_sample")}
         for fid, name in sorted(flows_.items()):
             ids = a.submit(fid)
             job = a.wait_jobs(ids)[0]

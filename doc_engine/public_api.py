@@ -28,9 +28,9 @@ from starlette.datastructures import UploadFile
 from . import flows, planner
 from .config import Section
 from .db import Db
+from .documents import MAX_FILE_BYTES, FileTooLarge, read_body, read_part
 from .documents import store_document
 
-MAX_FILE_BYTES = 200 * 1024 * 1024
 ACTIVE = ("queued", "running")
 
 
@@ -127,12 +127,19 @@ def register(app: FastAPI, db: Db, cfg: Section, nudge: Callable[[], None],
             part = form.get("file")
             if not isinstance(part, UploadFile):
                 raise ApiError(400, "invalid_request", 'Send the file as a form part named "file".')
-            data, name = await part.read(), name or part.filename or ""
+            name = name or part.filename or ""
+            data = await _limited(read_part(part, name or "The file"))
         else:
-            data = await request.body()
+            data = await _limited(read_body(request, name or "The file"))
         if not name:
             raise ApiError(400, "invalid_request", "Give the file a name: add ?name=report.pdf to the address.")
         return J(_file(await _store(name, data)), 201)
+
+    async def _limited(reading: Awaitable[bytes]) -> bytes:
+        try:
+            return await reading
+        except FileTooLarge as e:
+            raise ApiError(413, "file_too_large", f"{e}.") from None
 
     async def _store(name: str, data: bytes) -> dict:
         if not data:
@@ -187,7 +194,8 @@ def register(app: FastAPI, db: Db, cfg: Section, nudge: Callable[[], None],
                     if src is None:
                         raise bad(f'This flow has no file input named "{field}". It takes: '
                                   + ", ".join(flows.node_title(n) for n in srcs) + ".")
-                    uploads[src["id"]] = (v.filename or flows.node_title(src), await v.read())
+                    fname = v.filename or flows.node_title(src)
+                    uploads[src["id"]] = (fname, await _limited(read_part(v, fname)))
                 elif src is not None:
                     file_ids[src["id"]] = str(v).strip()
                 elif field == "values":

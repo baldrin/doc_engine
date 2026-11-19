@@ -49,7 +49,11 @@ export default function Activity() {
   useEffect(() => {
     if (!docs.length) return;
     const has = (id?: string) => (id && docs.some((d) => d.document_id === id) ? id : "");
-    setDocBy((cur) => Object.fromEntries(sources.map((s) => [s.id, has(cur[s.id]) || has(s.hint) || docs.find((d) => d.name === s.title)?.document_id || ""])));
+    // The file chosen for this source in the builder is remembered in the browser; start from that.
+    let remembered: Record<string, string> = {};
+    try { remembered = JSON.parse(localStorage.getItem(`docs:${flowId}`) || "{}"); } catch { /* storage may be unavailable */ }
+    setDocBy((cur) => Object.fromEntries(sources.map((s) => [s.id, has(cur[s.id]) || has(remembered[s.id]) || has(s.hint) || docs.find((d) => d.name === s.title)?.document_id || ""])));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sources, docs]);
   const missing = missingValues(needed, values);
   const chosen = sources.length > 0 && sources.every((s) => docBy[s.id]) && missing.length === 0;
@@ -62,6 +66,14 @@ export default function Activity() {
     return Object.fromEntries(live.map((j, i) => [j.job_id, i + 1]));
   }, [jobs]);
 
+  const cancelJob = async (j: Job) => {
+    if (!window.confirm(`Cancel "${j.label || j.flow_name}"? Calls already sent will finish and be paid for; their replies are not used.`)) return;
+    try {
+      await api(`/api/jobs/${j.job_id}/cancel`, { method: "POST" });
+      toast("Job cancelled");
+    } catch (e: any) { toast(e.message, true); }
+    load();
+  };
   const submit = async (confirmed = false) => {
     setBusy(true);
     try {
@@ -114,7 +126,7 @@ export default function Activity() {
               <div style={{ padding: "16px 18px 6px" }}><span className="caps">Jobs</span></div>
               <div style={{ overflowX: "auto" }}>
                 <table className="table">
-                  <thead><tr><th>Queue</th><th>Job</th><th>Priority</th><th>Status</th><th style={{ minWidth: 150 }}>Progress</th><th className="num">In flight</th><th className="num">Rejections</th><th className="num">Time</th></tr></thead>
+                  <thead><tr><th>Queue</th><th>Job</th><th>Priority</th><th>Status</th><th style={{ minWidth: 150 }}>Progress</th><th className="num">In flight</th><th className="num">Rejections</th><th className="num">Time</th><th><span className="sr">Actions</span></th></tr></thead>
                   <tbody>
                     {jobs.map((j) => {
                       const pct = j.state === "done" ? 100 : j.tasks_total ? (j.tasks_done / j.tasks_total) * 100 : 0;
@@ -132,10 +144,14 @@ export default function Activity() {
                           <td className="num">{j.in_flight || ""}</td>
                           <td className="num" style={{ color: j.rejections ? "var(--red)" : "var(--muted)" }}>{j.rejections}</td>
                           <td className="num">{fmtClock(j.wall_s)}</td>
+                          <td onClick={(e) => e.stopPropagation()}>
+                            {j.state === "queued" || j.state === "running"
+                              ? <button className="btn small ghost danger" onClick={() => cancelJob(j)}><Icon name="stop" />Cancel</button> : null}
+                          </td>
                         </tr>
                       );
                     })}
-                    {!jobs.length ? <tr><td colSpan={8} style={{ color: "var(--muted)", padding: 20 }}>No jobs yet. Submit one on the right, or start a test run from a flow.</td></tr> : null}
+                    {!jobs.length ? <tr><td colSpan={9} style={{ color: "var(--muted)", padding: 20 }}>No jobs yet. Submit one on the right, or start a test run from a flow.</td></tr> : null}
                   </tbody>
                 </table>
               </div>

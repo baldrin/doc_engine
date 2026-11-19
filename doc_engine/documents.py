@@ -46,8 +46,14 @@ def detect_kind(name: str, data: bytes) -> str:
     if (head.startswith((b"\x89PNG", b"\xff\xd8\xff", b"GIF8", b"II*\x00", b"MM\x00*"))
             or (head[:4] == b"RIFF" and head[8:12] == b"WEBP") or (head[:2] == b"BM" and ext == ".bmp")):
         return "image"
-    if ext in OFFICE_EXT or head.startswith((b"PK\x03\x04", b"\xd0\xcf\x11\xe0")):
-        raise ValueError(f"{name} is an office file, which is not supported. Save it as a PDF and upload that.")
+    office = f"{name} is an office file, which is not supported. Save it as a PDF and upload that."
+    if ext in OFFICE_EXT or head.startswith(b"\xd0\xcf\x11\xe0"):
+        raise ValueError(office)
+    if head.startswith(b"PK\x03\x04"):
+        # Modern office files are zip archives too. They name their parts in a recognisable way.
+        if any(mark in data[:65536] for mark in (b"[Content_Types].xml", b"word/", b"xl/", b"ppt/", b"mimetypeapplication/vnd.oasis")):
+            raise ValueError(office)
+        raise ValueError(f"{name} is a zip archive, which is not supported. Upload the files inside it one at a time.")
     if ext in IMAGE_EXT:
         raise ValueError(f"{name} could not be read as an image.")
     if ext == ".pdf":
@@ -161,6 +167,38 @@ def prepare(name: str, data: bytes, *, image_max_px: int = 1568, text_page_chars
 
 
 DOC_COLUMNS = "document_id, name, pages, size_bytes, is_sample, created_at, kind, page_tokens"
+MAX_FILE_BYTES = 200 * 1024 * 1024
+
+
+class FileTooLarge(ValueError):
+    pass
+
+
+async def read_body(request: Any, name: str = "the file", limit: int = MAX_FILE_BYTES) -> bytes:
+    """The request body, read in pieces and given up as soon as it passes the limit, so an oversized upload
+    is never held in memory whole."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > limit:
+        raise FileTooLarge(f"{name} is larger than {limit // (1024 * 1024)} MB")
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > limit:
+            raise FileTooLarge(f"{name} is larger than {limit // (1024 * 1024)} MB")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def read_part(part: Any, name: str = "the file", limit: int = MAX_FILE_BYTES) -> bytes:
+    """One uploaded form part. Form parts are kept on disk while the request is read; the size is checked
+    before the part is loaded."""
+    if getattr(part, "size", None) is not None and part.size > limit:
+        raise FileTooLarge(f"{name} is larger than {limit // (1024 * 1024)} MB")
+    data = await part.read(limit + 1)
+    if len(data) > limit:
+        raise FileTooLarge(f"{name} is larger than {limit // (1024 * 1024)} MB")
+    return data
 
 
 async def store_document(db: Db, name: str, data: bytes, is_sample: bool = False,
@@ -172,8 +210,11 @@ async def store_document(db: Db, name: str, data: bytes, is_sample: bool = False
     doc = prepare(name, data, image_max_px=int(opts.get("image_max_px", 1568)),
                   text_page_chars=int(opts.get("text_page_chars", 3000)))
     sha = hashlib.sha256(data).hexdigest()               # of the file as uploaded
-    existing = await db.fetchone(f"SELECT {DOC_COLUMNS} FROM documents WHERE sha256 = %s AND name = %s", (sha, name))
+    existing = await db.fetchone(f"SELECT {DOC_COLUMNS}, via_api FROM documents WHERE sha256 = %s AND name = %s", (sha, name))
     if existing and document_id is None:
+        if existing.pop("via_api") and not via_api:
+            # First sent by a caller of the endpoint, now uploaded from the screen: show it in the file pickers.
+            await db.execute("UPDATE documents SET via_api = false WHERE document_id = %s", (existing["document_id"],))
         return {**existing, "reused": True}
     doc_id = document_id or new_id("doc")
     await db.execute(

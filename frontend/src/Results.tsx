@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useState } from "react";
-import { api, Job, pageRanges } from "./lib";
+import { api, Job, navigate, pageRanges } from "./lib";
 import { Icon, Link, toast, TopBar } from "./ui";
 
 interface OutItem { pages: number[]; text: string | null; data: any; truncated: boolean; input: string | null }
@@ -130,7 +130,7 @@ export default function Results({ jobId }: { jobId: string }) {
         crumbs={<><Link to="/activity">Activity</Link><span>/</span><Link to={`/runs/${jobId}`}>{job?.label || "Run"}</Link><span>/ Results</span></>}
         title={<h1 title={data?.document_name}>{multi ? inputs.map((i) => i.input).join(", ") : data?.document_name || "Results"}</h1>}
         badge={job ? <span className="pill gray">{job.flow_name}{job.flow_version ? ` · v${job.flow_version}` : ""}</span> : null}>
-        <button className="btn" onClick={() => history.back()}>Back to the run</button>
+        <button className="btn" onClick={() => navigate(`/runs/${jobId}`)}>Back to the run</button>
       </TopBar>
       <div className="results">
         <div className="results-main">
@@ -149,11 +149,14 @@ export default function Results({ jobId }: { jobId: string }) {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
                 <h2 style={{ fontSize: 20 }}>{out.title}</h2>
                 <span style={{ display: "flex", gap: 8 }}>
-                  {out.table ? <button className="btn small" onClick={() => download(`${out.title}.csv`, csv(out.table!), "text/csv")}><Icon name="download" />CSV</button> : null}
+                  {out.format === "table" && out.table ? <button className="btn small" onClick={() => download(`${out.title}.csv`, csv(out.table!), "text/csv")}><Icon name="download" />CSV</button> : null}
                   {out.items.some((i) => i.text) ? <button className="btn small" onClick={() => download(`${out.title}.md`, out.items.map((i) => i.text || "").join("\n\n"), "text/markdown")}><Icon name="download" />Text</button> : null}
                 </span>
               </div>
               {!out.items.length ? <p className="empty">This output is empty. No items reached it.</p> : null}
+              {out.format === "table" && out.table && out.items.some((i) => i.truncated) ? (
+                <div className="notice" style={{ marginBottom: 12 }}>At least one reply behind this table was cut off at the step's max output tokens, so rows may be missing. Raise it and run again.</div>
+              ) : null}
               {out.format === "table" && out.table ? (
                 <div className="tbl-wrap">
                   <table className="table">

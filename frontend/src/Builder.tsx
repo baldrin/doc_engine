@@ -27,6 +27,7 @@ interface Ctx {
   selectedEdge: string | null;
   nodeTitle: (id: string) => string;
 }
+const DUP_KEY = /Mac|iPhone|iPad/.test(navigator.platform || "") ? "⌘ D" : "Ctrl D";
 const BuilderCtx = createContext<Ctx>({ cfg: null, problems: [], estimate: null, docFor: () => null, multi: false, selectedEdge: null, cacheable: {}, nodeTitle: () => "" });
 
 type FNode = Node<any>;
@@ -238,8 +239,8 @@ function SchemaEditor({ fields, onChange, cfg }: { fields: Field[]; onChange: (f
 
 interface RefInfo { id: string; title: string; fromSource: boolean }
 
-function StepPanel({ node, inEdge, upstream, refs, setRole, removeEdge, cfg, tab, setTab, update, updateEdge, onTest, onDone, estimate, titleRef, inputs, onManageInputs }: {
-  inputs: ValueInput[]; onManageInputs: () => void;
+function StepPanel({ node, inEdge, upstream, refs, setRole, removeEdge, cfg, tab, setTab, update, updateEdge, onTest, onDone, estimate, titleRef, inputs, onManageInputs, onViewOutputs }: {
+  inputs: ValueInput[]; onManageInputs: () => void; onViewOutputs: () => void;
   node: FNode; inEdge: FEdge | null; upstream: FNode | null; cfg: AppConfig | null; tab: string; setTab: (t: string) => void;
   refs: RefInfo[]; setRole: (edgeId: string, role: "material" | "reference") => void; removeEdge: (edgeId: string) => void;
   update: (patch: Partial<StepData>) => void; updateEdge: (patch: Partial<EdgeData>) => void; onTest: () => void; onDone: () => void;
@@ -302,9 +303,11 @@ function StepPanel({ node, inEdge, upstream, refs, setRole, removeEdge, cfg, tab
       </div>
     </div>
   );
-  const track = (
+  // Only for text outputs: it adds the rule that asks the model to cite pages. Which pages an output covers is
+  // recorded by the engine either way.
+  const track = d.output.type === "schema" ? null : (
     <label className="toggle" htmlFor="m-cite">
-      <span><strong>Track source pages</strong><span>Every output knows which pages it covers</span></span>
+      <span><strong>Cite pages in the text</strong><span>Asks the model to mark each statement with its page, like [p. 12]</span></span>
       <input id="m-cite" type="checkbox" checked={d.track_pages !== false} onChange={(e) => update({ track_pages: e.target.checked })} />
     </label>
   );
@@ -359,7 +362,6 @@ function StepPanel({ node, inEdge, upstream, refs, setRole, removeEdge, cfg, tab
               </div>
             ) : null}
           </div>
-          {modelRow}
           {contract}
           {track}
         </>
@@ -498,6 +500,7 @@ function StepPanel({ node, inEdge, upstream, refs, setRole, removeEdge, cfg, tab
             </div>
           ) : <p className="hint">The step returns plain text. Choose Schema to get named fields that a filter or a table can use.</p>}
           {track}
+          <button className="btn small" style={{ alignSelf: "flex-start" }} onClick={onViewOutputs}><Icon name="doc" />View last outputs</button>
         </>
       ) : null}
 
@@ -519,7 +522,7 @@ function DocPicker({ docs, value, onChange, onUploaded, label = "File" }: { docs
     try {
       const d = await api<Doc>(`/api/documents?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } });
       onUploaded(d);
-      toast(`${d.name} uploaded (${docSize(d)})`);
+      toast(d.reused ? `${d.name} is already here (${docSize(d)})` : `${d.name} uploaded (${docSize(d)})`);
     } catch (e: any) { toast(e.message, true); }
     setBusy(false);
   };
@@ -695,6 +698,10 @@ function BuilderInner({ flowId }: { flowId: string }) {
     }));
   }, [setEdges]);
 
+  const asReference = (data?: EdgeData): EdgeData => {
+    const { role: _r, was: _w, ...settings } = (data || {}) as any;
+    return { role: "reference", ...(Object.keys(settings).length ? { was: settings } : {}) } as EdgeData;
+  };
   // Which connection a step works through. Making one the input turns the step's other connections into references.
   const setRole = useCallback((edgeId: string, role: "material" | "reference") => {
     setEdges((es) => {
@@ -703,11 +710,14 @@ function BuilderInner({ flowId }: { flowId: string }) {
       const fromSource = nodes.find((n) => n.id === me.source)?.type === "source";
       return es.map((e) => {
         if (e.id === edgeId) {
-          const data: EdgeData = role === "reference" ? { role: "reference" }
-            : { ...(e.data || {}), role: "material", instruction: e.data?.instruction || (fromSource ? "map" : "reduce"), window: e.data?.window ?? 1, overlap: e.data?.overlap ?? 0 };
+          // A connection turned into a reference keeps its instruction, window and rule aside ("was"), so turning
+          // it back restores them.
+          const was = (e.data as any)?.was || {};
+          const data: EdgeData = role === "reference" ? asReference(e.data)
+            : { ...was, role: "material", instruction: was.instruction || e.data?.instruction || (fromSource ? "map" : "reduce"), window: was.window ?? e.data?.window ?? 1, overlap: was.overlap ?? e.data?.overlap ?? 0 };
           return { ...e, data };
         }
-        if (role === "material" && e.target === me.target && !isRef(e)) return { ...e, data: { role: "reference" as const } };
+        if (role === "material" && e.target === me.target && !isRef(e)) return { ...e, data: asReference(e.data) };
         return e;
       });
     });
@@ -813,7 +823,9 @@ function BuilderInner({ flowId }: { flowId: string }) {
       const f = await api<Flow>(`/api/flows/${flowId}/${publish ? "publish" : "versions"}`, { method: "POST" });
       setFlow(f);
       setDirty(false);
-      toast(publish ? `Published as v${f.version}` : `Saved as v${f.version}`);
+      const same = (f as Flow & { unchanged?: boolean }).unchanged;
+      toast(publish ? (same ? `v${f.version} is already published. Nothing has changed since.` : `Published as v${f.version}`)
+        : same ? `Nothing has changed since v${f.version}. No new version was saved.` : `Saved as v${f.version}`);
     } catch (e: any) {
       if (e instanceof ApiError && e.body?.problems) { setProblems(e.body.problems); setShowProblems(true); }
       toast(e.message, true);
@@ -943,7 +955,7 @@ function BuilderInner({ flowId }: { flowId: string }) {
 
           <aside className="props" aria-label="Properties">
             {focusNode?.type === "step" ? (
-              <StepPanel node={focusNode} inEdge={inEdge} upstream={upstream} refs={refs} setRole={setRole} removeEdge={(id) => remove(id, true)} cfg={cfg} tab={tab} setTab={setTab} estimate={estimate} titleRef={titleRef} inputs={inputs} onManageInputs={deselect}
+              <StepPanel node={focusNode} inEdge={inEdge} upstream={upstream} refs={refs} setRole={setRole} removeEdge={(id) => remove(id, true)} cfg={cfg} tab={tab} setTab={setTab} estimate={estimate} titleRef={titleRef} inputs={inputs} onManageInputs={deselect} onViewOutputs={() => setDialog({ kind: "outputs", id: focusNode.id })}
                 update={(p) => updateNode(focusNode.id, p)} updateEdge={(p) => inEdge && updateEdge(inEdge.id, p)}
                 onTest={() => setDialog({ kind: "run", only: focusNode.id })}
                 onDone={() => { setNodes((ns) => ns.map((n) => ({ ...n, selected: false }))); setEdges((es) => es.map((e) => ({ ...e, selected: false }))); }} />
@@ -996,7 +1008,7 @@ function BuilderInner({ flowId }: { flowId: string }) {
                   </div>
                 ) : null}
                 {estimate?.assumed_filter_ratio ? <p className="hint">A filter's share is assumed to be 25% until the flow has run once.</p> : null}
-                <p className="hint">Right click a block for more actions. <kbd>Del</kbd> removes the selection, <kbd>F2</kbd> renames, <kbd>Ctrl D</kbd> duplicates.</p>
+                <p className="hint">Right click a block for more actions. <kbd>Del</kbd> removes the selection, <kbd>F2</kbd> renames, <kbd>{DUP_KEY}</kbd> duplicates.</p>
               </>
             )}
           </aside>
@@ -1022,7 +1034,7 @@ function BuilderInner({ flowId }: { flowId: string }) {
                 <>
                   <button className="first" onClick={close(() => { select(menu.id); setTab("Prompt"); })}><span>Configure</span><span className="k">Double click</span></button>
                   <button onClick={close(() => { select(menu.id); setTimeout(() => { titleRef.current?.focus(); titleRef.current?.select(); }, 30); })}><span>Rename</span><span className="k">F2</span></button>
-                  <button onClick={close(() => duplicate(menu.id))}><span>Duplicate</span><span className="k">Ctrl D</span></button>
+                  <button onClick={close(() => duplicate(menu.id))}><span>Duplicate</span><span className="k">{DUP_KEY}</span></button>
                   {n?.type === "step" ? <button onClick={close(() => setDialog({ kind: "run", only: menu.id }))}><span>Test this step</span><span className="k">T</span></button> : null}
                   {n?.type === "step" ? <button onClick={close(() => setDialog({ kind: "outputs", id: menu.id }))}><span>View last outputs</span></button> : null}
                   <hr />
@@ -1094,7 +1106,8 @@ function RunDialog({ flow, graph, name, docs, docBy, setDoc, addDoc, only, onlyT
       await api(`/api/flows/${flow.flow_id}`, { method: "PUT", json: { name, graph } });
       saveValues(flow.flow_id, values);
       const r = await api<{ job_ids: string[] }>("/api/jobs", {
-        json: { flow_id: flow.flow_id, graph, documents, values: valuesToSend(needed, values), priority, count: 1, only_node: only, label: only ? `Step test: ${onlyTitle}` : "Test run" },
+        // One test run is never a saturating submission, whatever server.saturating_jobs says.
+        json: { flow_id: flow.flow_id, graph, documents, values: valuesToSend(needed, values), priority, count: 1, only_node: only, label: only ? `Step test: ${onlyTitle}` : "Test run", confirm_saturation: true },
       });
       navigate(`/runs/${r.job_ids[0]}`);
     } catch (e: any) { toast(e.message, true); setBusy(false); }

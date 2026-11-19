@@ -139,7 +139,12 @@ def step_data(node: dict) -> dict:
     d.setdefault("system", "")
     d.setdefault("instructions", "")
     d.setdefault("model", "sonnet")
-    d["max_tokens"] = int(d.get("max_tokens") or 1500)
+    # Left out altogether: the default. Present but empty, zero or not a number: 0, which validation reports.
+    raw_max = d.get("max_tokens", 1500)
+    try:
+        d["max_tokens"] = max(0, int(float(raw_max))) if raw_max not in (None, "") else 0
+    except (TypeError, ValueError):
+        d["max_tokens"] = 0
     d.setdefault("thinking", "off")
     out = dict(d.get("output") or {})
     out.setdefault("type", "text")
@@ -540,7 +545,7 @@ def validate(graph: dict, models: list[str]) -> list[dict]:
             out.append(problem(f"{title} is connected to the same block twice. Remove one connection.", n["id"]))
             continue
         if len(mats) == 0:
-            out.append(problem(f"{title} has references but nothing to work through. Set one connection to Input.",
+            out.append(problem(f"{title} has references but nothing to work through. Choose Make input on one of them.",
                                n["id"], refs[0]["id"]))
             continue
         if len(mats) > 1:
@@ -560,7 +565,7 @@ def validate(graph: dict, models: list[str]) -> list[dict]:
         if d["model"] not in models:
             out.append(problem(f"{title} uses a model that is not configured ({d['model']}).", n["id"]))
         if d["max_tokens"] < 1:
-            out.append(problem(f"{title} needs a max output above zero.", n["id"]))
+            out.append(problem(f"{title} needs Max output tokens above zero.", n["id"]))
         if d["thinking"] not in THINKING_LEVELS:
             out.append(problem(f"{title} has an unknown thinking setting.", n["id"]))
         if d["output"]["type"] == "schema":

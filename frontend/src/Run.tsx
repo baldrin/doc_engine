@@ -411,7 +411,10 @@ function RunInner({ jobId }: { jobId: string }) {
   const multi = Object.keys(job.documents || {}).length > 1;
   const ctx: RunCtxT = { st: shown, cfg, docName: job.document_name, pages: job.pages, docs: job.documents || {}, multi };
 
-  const cancel = async () => { try { await api(`/api/jobs/${jobId}/cancel`, { method: "POST" }); } catch (e: any) { toast(e.message, true); } };
+  const cancel = async () => {
+    if (!window.confirm("Cancel this run? Calls already sent will finish and be paid for; their replies are not used.")) return;
+    try { await api(`/api/jobs/${jobId}/cancel`, { method: "POST" }); } catch (e: any) { toast(e.message, true); }
+  };
 
   return (
     <RunCtx.Provider value={ctx}>
@@ -461,7 +464,7 @@ function RunInner({ jobId }: { jobId: string }) {
                   <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: "1 1 auto", minWidth: 0 }}>
                     <h3>{complete ? "Run complete" : view === "failed" ? "Run failed" : "Run cancelled"}</h3>
                     <p>{fmtInt(shown.calls)} calls · {shown.rejections} rejections · {fmtClock(clock)}{job.cost != null && !replay ? ` · $${job.cost.toFixed(2)}` : ""}</p>
-                    <p>{complete ? `${outputs} output${outputs === 1 ? "" : "s"} ready, every finding linked to its pages` : shown.error}</p>
+                    <p>{complete ? `${outputs} output${outputs === 1 ? "" : "s"} ready` : shown.error}</p>
                   </div>
                   {complete && !replay ? <button className="btn primary" onClick={() => navigate(`/runs/${jobId}/results`)}>Results</button> : null}
                 </div>

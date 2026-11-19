@@ -170,3 +170,9 @@ async def sync_models(db: Db, cfg: Section) -> None:
              float(m.get("bucket_measured") or m.get("bucket_capacity_output") or m.otpm),
              float(led.get("default_call_s", 9)), margin, float(led.get("hold_on_429_s", 1)),
              bool(led.get("learn_estimates", True)), float(led.get("hold_on_429_max_s", 15))))
+    # A model taken out of the settings leaves the quota panels once nothing of it is waiting or in flight.
+    await db.execute(
+        """DELETE FROM quota q WHERE NOT (q.model = ANY(%s))
+           AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.model = q.model AND t.state IN ('waiting', 'ready', 'running'))
+           AND NOT EXISTS (SELECT 1 FROM reservations r WHERE r.model = q.model AND r.released_at IS NULL)""",
+        (list(cfg.models),))

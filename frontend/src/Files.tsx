@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, Doc, docSize, fmtAgo, fmtBytes, UPLOAD_ACCEPT } from "./lib";
+import { api, Doc, docSize, fmtAgo, fmtBytes, UPLOAD_ACCEPT, useInterval } from "./lib";
 import { Icon, toast, TopBar } from "./ui";
 
 const KIND = { pdf: "PDF", image: "Image", text: "Text" } as const;
@@ -10,14 +10,20 @@ export default function Files() {
   const [busy, setBusy] = useState(false);
 
   const load = () => api<Doc[]>("/api/documents?all=true").then((d) => setDocs([...d.filter((x) => !x.is_sample), ...d.filter((x) => x.is_sample)])).catch((e) => toast(e.message, true));
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useInterval(load, 5000);      // a file in use becomes removable when its run ends
 
   const upload = async (files: FileList) => {
     setBusy(true);
     for (const file of Array.from(files)) {
       try {
         const d = await api<Doc>(`/api/documents?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } });
-        toast(`${d.name} uploaded (${docSize(d)})`);
+        toast(d.reused ? `${d.name} is already here (${docSize(d)})` : `${d.name} uploaded (${docSize(d)})`);
       } catch (e: any) { toast(`${file.name}: ${e.message}`, true); }
     }
     setBusy(false);

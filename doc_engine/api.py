@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from . import flows, planner, prompts, public_api, samples
 from .config import ROOT, Section, public_models
 from .db import Db, Jsonb, apply_schema, missing_tables, sync_models
-from .documents import DocumentCache, store_document
+from .documents import DocumentCache, read_body, store_document
 
 log = logging.getLogger("doc_engine.api")
 STATIC = Path(__file__).resolve().parent / "static"
@@ -172,9 +172,11 @@ def create_app(cfg: Section) -> FastAPI:
             log.info("tables missing: applying the schema")
         await apply_schema(db)            # idempotent; also installs the current admission functions
         await sync_models(db, cfg)
-        if (await db.fetchone("SELECT count(*) AS n FROM flows"))["n"] == 0:
-            log.info("no flows yet: creating the sample flows and documents")
-            await asyncio.to_thread(lambda: None)
+        # Only on a database that has never held anything. Someone who deleted every flow meant it; the sample
+        # files cannot be removed, so their presence shows the samples were installed before.
+        fresh = await db.fetchone("SELECT (SELECT count(*) FROM flows) AS flows, (SELECT count(*) FROM documents) AS files")
+        if fresh["flows"] == 0 and fresh["files"] == 0:
+            log.info("empty database: creating the sample flows and files")
             await samples.install_samples(db, cfg)
         hub.start()
         if cfg.worker.get("enabled", True):
@@ -291,6 +293,11 @@ def create_app(cfg: Section) -> FastAPI:
     @app.post("/api/flows/{flow_id}/versions")
     async def save_version(flow_id: str) -> Response:
         row = await flow_row(flow_id)
+        problems = [p for p in flows.validate(row["graph"], list(cfg.models)) if p["level"] == "error"]
+        if problems:
+            return J({"error": "Fix the problems before saving a version.", "problems": problems}, 400)
+        if await _same_as_latest(row):
+            return J({**row, "unchanged": True})
         v = row["version"] + 1
         await db.execute("INSERT INTO flow_versions (flow_id, version, name, graph) VALUES (%s,%s,%s,%s)",
                          (flow_id, v, row["name"], Jsonb(row["graph"])))
@@ -312,12 +319,25 @@ def create_app(cfg: Section) -> FastAPI:
                              f'so rename this one before publishing.')
         if not public_api.flow_key(row["name"]):
             raise ValueError("Give the flow a name before publishing. Callers run it by that name.")
+        if await _same_as_latest(row):
+            # Nothing changed since the latest version: publish that one, do not make another.
+            unchanged = row["published_version"] == row["version"]
+            await db.execute("UPDATE flows SET published_version = version, updated_at = now() WHERE flow_id = %s", (flow_id,))
+            return J({**await flow_row(flow_id), "unchanged": unchanged})
         v = row["version"] + 1
         await db.execute("INSERT INTO flow_versions (flow_id, version, name, graph) VALUES (%s,%s,%s,%s)",
                          (flow_id, v, row["name"], Jsonb(row["graph"])))
         await db.execute("UPDATE flows SET version = %s, published_version = %s, updated_at = now() WHERE flow_id = %s",
                          (v, v, flow_id))
         return J(await flow_row(flow_id))
+
+    async def _same_as_latest(row: dict) -> bool:
+        """True when the draft says the same as the latest saved version, under the same name."""
+        if not row["version"]:
+            return False
+        latest = await db.fetchone("SELECT name, graph FROM flow_versions WHERE flow_id = %s AND version = %s",
+                                   (row["flow_id"], row["version"]))
+        return bool(latest) and latest["name"] == row["name"] and flows.meaning(latest["graph"]) == flows.meaning(row["graph"])
 
     @app.post("/api/flows/{flow_id}/unpublish")
     async def unpublish(flow_id: str) -> Response:
@@ -396,11 +416,9 @@ def create_app(cfg: Section) -> FastAPI:
     @app.post("/api/documents")
     async def upload(request: Request, name: str = "document.pdf") -> Response:
         """The body is the file itself: a PDF, an image or a text file. The kind is read from the content."""
-        data = await request.body()
+        data = await read_body(request, name)        # stops reading at 200 MB
         if not data:
             raise ValueError("the upload was empty")
-        if len(data) > 200 * 1024 * 1024:
-            raise ValueError("the file is larger than 200 MB")
         return J(await store_document(db, name, data, cfg=cfg))
 
     @app.delete("/api/documents/{document_id}")

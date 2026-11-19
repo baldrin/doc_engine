@@ -105,6 +105,7 @@ export interface Flow {
   last_run?: string | null;
 }
 export interface Doc {
+  reused?: boolean;          // set by an upload: the same file under the same name was already held
   document_id: string;
   name: string;
   pages: number;
