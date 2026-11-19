@@ -113,6 +113,19 @@ Raised by the owner on 2026-11-18. Certain flows should go ahead of everything e
   - Who may set it. This depends on sign-in and job owners (issues 15 and 26).
 - **Not needed:** a way to lower a job's priority. Marking it bulk already does that.
 
+### One day: a smart advisor agent
+
+Raised by the owner on 2026-11-18 as a far-off idea. An agent that reads the stored record of flows, jobs and
+calls and suggests improvements. A person accepts or ignores each suggestion.
+
+- **Examples:** a large reference sent with many calls that could be summarized first; a step on an expensive
+  model whose outputs a cheaper model could produce; the same step repeated across flows; a weekly report in
+  plain language of what ran, what it cost and what failed.
+- **It advises; it does not schedule.** Admission stays exact arithmetic in the database, so it is fast and
+  every decision can be explained.
+- **Do first, without an agent:** warnings from plain counts, such as "this step was cut off in 30% of calls,
+  raise Max output tokens" and "this step uses a fifth of its Max output tokens".
+
 ## Fixed
 
 Fixed on 2026-11-18 and checked on the fake gateway or in the browser, except where noted.
