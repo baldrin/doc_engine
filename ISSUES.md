@@ -97,6 +97,22 @@ flows, so its prompt, model, input and output settings are set up once.
   flow). It covers "do not set this up again" with much less work, but it copies: a later fix does not reach
   flows already using it.
 
+### A top priority level, set on the flow
+
+Raised by the owner on 2026-11-18. Certain flows should go ahead of everything else that is waiting.
+
+- **Today:** two levels per job, interactive and bulk. The queue sorts by a priority number, so a third level
+  is a small change.
+- **What to add:** a priority setting on the flow (Top, Interactive, Bulk) that its jobs inherit, and a rule
+  that a caller of the endpoint cannot ask for more than the flow allows.
+- **It jumps the line; it does not interrupt.** Calls already sent finish; the top job gets the next free
+  capacity.
+- **Questions to settle first:**
+  - Starvation: a large top-priority load stops everything else. Keep the level for small jobs, or cap the
+    share of the quota it may take.
+  - Who may set it. This depends on sign-in and job owners (issues 15 and 26).
+- **Not needed:** a way to lower a job's priority. Marking it bulk already does that.
+
 ## Fixed
 
 Fixed on 2026-11-18 and checked on the fake gateway or in the browser, except where noted.
