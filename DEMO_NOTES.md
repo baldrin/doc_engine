@@ -20,7 +20,7 @@ from a screen or from one HTTP endpoint, with every job sharing one model quota.
 
 ## Walk-through
 
-Address: `http://localhost:8001`
+Address: `http://localhost:8100`
 
 | # | Where | Do | Say |
 |---|---|---|---|
