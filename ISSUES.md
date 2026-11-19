@@ -49,6 +49,7 @@ None open. Issues 1 to 7 were fixed on 2026-11-18; see [Fixed](#fixed) at the en
 | 42 | **Deleting a flow shows nothing on failure.** | | `Flows.tsx` | Show the error, as create and duplicate do. |
 | 44 | **Zip files get the office-file message** ("Save it as a PDF"). | | `documents.py` | Tell a plain zip from an office file. |
 | 45 | **Re-uploading a file says "uploaded".** | Same content and name returns the existing file. If that file came through the API it stays hidden from the builder's pickers. | `Files.tsx`, `documents.py` | Say "already here"; show the file in pickers once uploaded from the screen. |
+| 46 | **Model and Max output tokens appear on two tabs of a step.** | The same row is on the Prompt tab and the Model tab. It is one setting shown twice, which reads as two. Noted by the owner on 2026-11-18. | `Builder.tsx` (`modelRow`) | Remove the row from the Prompt tab; keep it on the Model tab. Update `docs/guide/steps.md`. |
 
 ## Priority 3
 
@@ -73,6 +74,28 @@ None open. Issues 1 to 7 were fixed on 2026-11-18; see [Fixed](#fixed) at the en
 - **No Python version is declared.** Developed on 3.12; the installed packages need 3.11 or newer.
 - **`/api/estimate` and some comments still say "documents".** No effect on screen.
 - **`load --dry-run`** passes neither keep ratios nor per-file page sizes to the estimate.
+
+## Feature ideas, not started
+
+Not issues. Kept here so they are not lost. None is to be started until the engine works end to end on the
+real gateway and on Databricks Apps.
+
+### A flow used as a step in another flow
+
+Raised by the owner on 2026-11-18. A small flow such as "extract text from image" could be used inside other
+flows, so its prompt, model, input and output settings are set up once.
+
+- **Why it is worth doing:** one definition to maintain, and a fix reaches every flow that uses it.
+- **Questions to settle first:**
+  - Which version runs: the one published when the outer flow was saved, or whatever is published at run time.
+  - How the inner flow's files and value inputs are filled from the outer flow.
+  - Which of the inner flow's outputs becomes the block's output, and how page references pass through.
+  - Refusing loops (a flow that reaches itself).
+  - The cost estimate and the Run screen for a flow inside a flow.
+- **The scheduler is not affected:** the inner flow's calls are tasks in the same queue under the same quota.
+- **A smaller alternative:** saved steps (a step with its settings kept in the library and dropped into any
+  flow). It covers "do not set this up again" with much less work, but it copies: a later fix does not reach
+  flows already using it.
 
 ## Fixed
 
