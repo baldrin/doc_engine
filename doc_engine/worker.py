@@ -75,7 +75,8 @@ class Worker:
         await asyncio.gather(*self._bg, *tasks, return_exceptions=True)
         try:
             await self.db.execute("DELETE FROM workers WHERE worker_id = %s", (self.worker_id,))
-            await self.db.execute("SELECT de_reap(%s)", (float(self.cfg.ledger.get("dead_worker_after_s", 30)),))
+            # A clean stop returns this worker's calls to the queue; it never sets one aside as lost.
+            await self.db.execute("SELECT de_reap(%s, 0)", (float(self.cfg.ledger.get("dead_worker_after_s", 30)),))
         except Exception:
             log.exception("worker cleanup failed")
         await self.client.close()
@@ -99,16 +100,47 @@ class Worker:
     async def _reaper(self) -> None:
         interval = float(self.cfg.ledger.get("reaper_interval_s", 5))
         dead = float(self.cfg.ledger.get("dead_worker_after_s", 30))
+        max_rec = int(self.cfg.ledger.get("max_recoveries_per_call", 3) or 0)
         while not self._stop.is_set():
             await asyncio.sleep(interval)
             try:
-                row = await self.db.fetchone("SELECT de_reap(%s) AS n", (dead,))
+                row = await self.db.fetchone("SELECT de_reap(%s, %s) AS n", (dead, max_rec))
                 if row and row["n"]:
                     log.warning("returned %d task(s) to the queue after a lost worker or lease", row["n"])
                     self.nudge()
+                await self._fail_lost_too_often()      # every round, so one left by a stopped process is picked up
                 await self.db.execute("DELETE FROM workers WHERE heartbeat_at < clock_timestamp() - interval '10 minutes'")
             except Exception as e:
                 log.warning("reaper failed: %s", e)
+
+    async def _fail_lost_too_often(self) -> None:
+        """Fails the job of a call the reaper set aside as 'lost', so it cannot circulate for ever."""
+        cfg = self.cfg
+        for r in await self.db.fetch("SELECT task_id, job_id FROM tasks WHERE state = 'lost'"):
+
+            async def go(conn: psycopg.AsyncConnection, r=r) -> None:
+                cur = await conn.execute("SELECT * FROM jobs WHERE job_id = %s FOR UPDATE", (r["job_id"],))
+                job = await cur.fetchone()
+                cur = await conn.execute(
+                    "SELECT * FROM tasks WHERE task_id = %s AND state = 'lost' FOR UPDATE", (r["task_id"],))
+                task = await cur.fetchone()
+                if task is None or job is None:
+                    return
+                err = (f"this call was returned to the queue {task['recoveries']} times because the worker sending it "
+                       f"stopped each time. It was not sent again.")
+                await conn.execute(
+                    "UPDATE tasks SET state = 'failed', error = %s, finished_at = clock_timestamp() WHERE task_id = %s",
+                    (err, task["task_id"]))
+                await planner.emit(conn, "task_failed", job_id=task["job_id"], node_id=task["node_id"],
+                                   task_id=task["task_id"], model=task["model"],
+                                   data={"outcome": "lost", "error": err, "kind": task["kind"]})
+                if task["kind"] == "warmup":     # caching is optional; the step's calls run without it
+                    await planner.warm_lock(conn, task["model"], (task.get("payload") or {}).get("prefix_hash"))
+                    await planner.release_gated(conn, cfg, task)
+                else:
+                    title = flows.nodes_by_id(job["graph"]).get(task["node_id"], {}).get("data", {}).get("title") or task["node_id"]
+                    await planner.fail_job(conn, task["job_id"], f"{title}: {err}")
+            await self.db.tx(go)
 
     async def _listen(self) -> None:
         """Wakes the dispatcher when another process completes a call or submits a job."""
@@ -330,6 +362,8 @@ class Worker:
         async def go(conn: psycopg.AsyncConnection) -> None:
             cur = await conn.execute("SELECT * FROM jobs WHERE job_id = %s FOR UPDATE", (job_id,))
             job = await cur.fetchone()
+            if is_warmup:      # calls of other jobs may be waiting for this warm-up; see planner.warm_lock
+                await planner.warm_lock(conn, model, (task.get("payload") or {}).get("prefix_hash"))
             await conn.execute(
                 """INSERT INTO calls (task_id, job_id, node_id, model, kind, thinking, sent_at, first_token_at, done_at,
                                       request_bytes, http_status, outcome, limit_type, stop_reason, input_tokens,
@@ -360,6 +394,8 @@ class Worker:
             if not live:
                 await conn.execute("UPDATE tasks SET state = 'cancelled', lease_owner = NULL, finished_at = clock_timestamp() "
                                    "WHERE task_id = %s", (tid,))
+                if is_warmup:        # calls of other jobs may be waiting for this warm-up
+                    await planner.release_gated(conn, cfg, task)
             elif res.outcome == "ok":
                 await conn.execute(
                     """UPDATE tasks SET state = 'done', lease_owner = NULL, lease_expires_at = NULL, output_text = %s,

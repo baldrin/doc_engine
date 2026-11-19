@@ -153,6 +153,8 @@ class App:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", action="store_true", help="keep the test schema afterwards")
+    ap.add_argument("--rounds", type=int, default=3, help="how many times to run ten jobs at once with a cold cache")
+    ap.add_argument("--quota-scale", type=float, default=5, help="multiply the model limits, in the settings and the fake gateway alike")
     ap.add_argument("--speed", type=float, default=25, help="how much faster than life the fake gateway answers")
     args = ap.parse_args()
 
@@ -166,6 +168,13 @@ def main() -> int:
     raw["server"]["port"] = app_port
     raw["ledger"]["dead_worker_after_s"] = 12   # heartbeats are every 5 seconds
     raw["ledger"]["reaper_interval_s"] = 1
+    # Quota drains in real time whatever the gateway's speed, so ten jobs under the real limits take minutes.
+    # The settings and the fake gateway are scaled up together: the scheduler is still under pressure, for less time.
+    scale = args.quota_scale
+    for m in raw["models"].values():
+        for k in ("itpm", "otpm", "bucket_capacity_output", "bucket_measured"):
+            if m.get(k):
+                m[k] = int(m[k] * scale)
     cfg_path = tmp / "config.e2e.yaml"
     cfg_path.write_text(yaml.safe_dump(raw))
 
@@ -200,7 +209,9 @@ def main() -> int:
         check(r.returncode == 0 and "per job" in r.stdout, "`load --dry-run` prints an estimate", r.stdout + r.stderr[-300:])
 
         # ---------------------------------------------------------------- start the gateway and the application
-        gw = start([PY, "-m", "fake_gateway", "--port", str(gw_port), "--speed", str(args.speed)], env, tmp / "gateway.log")
+        gw = start([PY, "-m", "fake_gateway", "--port", str(gw_port), "--speed", str(args.speed),
+                    "--otpm", str(100000 * scale), "--itpm", str(1000000 * scale), "--bucket", str(40000 * scale)],
+                   env, tmp / "gateway.log")
         app_proc = start([PY, "-m", "doc_engine", "serve"], env, tmp / "app.log")
         base = f"http://127.0.0.1:{app_port}"
         if not check(wait_http(base + "/api/health"), "the application starts and answers /api/health"):
@@ -224,8 +235,34 @@ def main() -> int:
 
         # ---------------------------------------------------------------- ten jobs at once
         print("ten jobs at once")
-        ids = a.submit("flow_sample_contract", count=5, bulk=5)
-        jobs = a.wait_jobs(ids, 400)
+        # Several rounds, each with a cold cache, so the ten jobs need their warm-ups at the same moment. A job
+        # waiting for another job's warm-up is the kind of thing that goes wrong one time in a few.
+        for rnd in range(args.rounds):
+            a.sql("DELETE FROM cache_warm RETURNING 1")
+            ids = a.submit("flow_sample_contract", count=5, bulk=5)
+            jobs = a.wait_jobs(ids, 300)
+            sent, distinct = a.sql("SELECT count(*), count(DISTINCT (model, payload->>'prefix_hash')) FROM tasks "
+                                   "WHERE job_id = ANY(%s) AND kind = 'warmup'", ids)[0]
+            stuck = a.sql("SELECT count(*) FROM tasks WHERE job_id = ANY(%s) AND state = 'waiting'", ids)[0][0]
+            ok = all(j["state"] == "done" for j in jobs) and sent == distinct and sent > 0
+            check(ok, f"round {rnd + 1}: ten jobs with a cold cache all finish and share one warm-up per prompt",
+                  f"{sent} warm-ups for {distinct} prompts; {stuck} calls still waiting; "
+                  f"{[j['state'] for j in jobs if j['state'] != 'done']}")
+            if not ok:
+                bad_ids = [j["job_id"] for j in jobs if j["state"] != "done"]
+                print("    calls of the unfinished jobs, by state:", a.sql(
+                    "SELECT kind, state, model, count(*), min(not_before - clock_timestamp()), max(recoveries), "
+                    "max(rejections), max(attempts) FROM tasks WHERE job_id = ANY(%s) GROUP BY 1,2,3 ORDER BY 1,2", bad_ids))
+                print("    steps:", a.sql("SELECT job_id, node_id, state, tasks_done, tasks_total, planned FROM job_steps "
+                                          "WHERE job_id = ANY(%s) AND state <> 'done'", bad_ids))
+                print("    quota:", a.sql("SELECT model, out_level, cap_used, hold_until - clock_timestamp(), hold_streak, "
+                                          "(SELECT count(*) FROM reservations r WHERE r.model = q.model AND released_at IS NULL) "
+                                          "FROM quota q"))
+                print("    workers:", a.sql("SELECT worker_id, clock_timestamp() - heartbeat_at FROM workers"))
+                print("    app log tail:\n" + "\n".join((tmp / "app.log").read_text().splitlines()[-25:]))
+                for j in ids:
+                    a.http.post(f"/api/jobs/{j}/cancel")
+                break
         check(all(j["state"] == "done" for j in jobs), "ten jobs (5 interactive, 5 bulk) all finish",
               str([(j["state"], j.get("error")) for j in jobs if j["state"] != "done"]))
         check(sum(j["rejections"] for j in jobs) == 0, "no call was rejected", str(sum(j["rejections"] for j in jobs)))
@@ -233,7 +270,8 @@ def main() -> int:
         fin = {j["priority"]: [] for j in jobs}
         for j in jobs:
             fin[j["priority"]].append(j["finished_at"])
-        check(max(fin["interactive"]) <= max(fin["bulk"]), "interactive jobs finished before the last bulk job")
+        if all(j["finished_at"] for j in jobs):
+            check(max(fin["interactive"]) <= max(fin["bulk"]), "interactive jobs finished before the last bulk job")
 
         # ---------------------------------------------------------------- refusals leave nothing behind
         print("refusals")
@@ -299,6 +337,35 @@ def main() -> int:
         check(all(j["state"] == "done" for j in jobs), "both jobs finish after a worker is killed",
               str([(j["state"], j.get("error")) for j in jobs]))
         check(a.steps_exact(ids), "no call was lost or counted twice")
+
+        print("a call that keeps losing its worker")
+        known = {w[0] for w in a.sql("SELECT worker_id FROM workers")}
+        extra = start([PY, "-m", "doc_engine", "worker"], env, tmp / "worker2.log")
+        new_id = None
+        for _ in range(40):
+            new = [w[0] for w in a.sql("SELECT worker_id FROM workers") if w[0] not in known]
+            if new:
+                new_id = new[0]
+                break
+            time.sleep(0.25)
+        ids = a.submit("flow_sample_medical")
+        held = 0
+        for _ in range(200):      # until the new worker holds a call of this job, then lose it for the fourth time
+            held = len(a.sql("UPDATE tasks SET recoveries = 3 WHERE job_id = %s AND state = 'running' AND lease_owner = %s "
+                             "RETURNING 1", ids[0], new_id))
+            if held:
+                break
+            time.sleep(0.05)
+        stop(extra, hard=True)
+        check(held > 0, "the second worker was holding a call when it was killed")
+        job = a.wait_jobs(ids, 120)[0]
+        check(job["state"] == "failed" and "returned to the queue" in (job.get("error") or ""),
+              "a call lost four times fails its job with a clear message", f"{job['state']}: {job.get('error')}")
+
+        q = {m["model"]: m for m in a.http.get("/api/quota").json()["models"]}
+        used = a.sql("SELECT cap_used FROM quota WHERE model = 'sonnet'")[0][0]
+        check(used is not None and abs(q["sonnet"]["out_capacity"] - used) < 1,
+              "the quota panel reports the cap admission used", f"{q['sonnet']['out_capacity']} vs {used}")
 
         # ---------------------------------------------------------------- a gateway far smaller than the settings say
         print("rejections (a gateway with a much smaller quota than configured)")

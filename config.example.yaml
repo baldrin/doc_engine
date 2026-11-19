@@ -65,6 +65,7 @@ ledger:
   learn_estimates: true          # count in-flight calls at the learned mean output once a step has 3 samples
   lease_s: 900                   # must exceed gateway.request_timeout_s
   dead_worker_after_s: 30        # a worker that has not heartbeated this long is treated as gone
+  max_recoveries_per_call: 3     # a call returned to the queue more often than this (its worker was lost each time) fails its job. 0 = no limit
   reaper_interval_s: 5
 
 worker:

@@ -128,7 +128,12 @@ class EventHub:
 
 async def quota_snapshot(db: Db) -> dict:
     rows = await db.fetch(
-        """SELECT q.model, q.gateway_name, q.otpm, q.itpm, q.out_capacity, q.in_capacity, q.capacity_mode,
+        """SELECT q.model, q.gateway_name, q.otpm, q.itpm, q.in_capacity, q.capacity_mode,
+                  -- The cap admission works with. In `duration` mode it is the one the last check used, or, before
+                  -- any check, the one a call of the default length would get.
+                  CASE WHEN q.capacity_mode = 'duration'
+                       THEN coalesce(q.cap_used, (q.bucket_measured + q.otpm / 60.0 * 0.5 * q.default_call_s) * (1 - q.safety_margin))
+                       ELSE q.out_capacity END AS out_capacity,
                   greatest(0, q.out_level - extract(epoch FROM clock_timestamp() - q.updated_at) * q.otpm / 60.0) AS out_level,
                   greatest(0, extract(epoch FROM q.hold_until - clock_timestamp())) AS hold_s,
                   q.rejections, q.admissions,

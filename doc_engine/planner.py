@@ -243,11 +243,29 @@ async def plan_target(conn: psycopg.AsyncConnection, cfg: Section, job: dict, sr
     gate_id = None
     w = cfg.worker
     h = prompts.prefix_hash(model, system) if cacheable else None
+    shared_gate = False
     if (w.get("cache_warmup", True) and cacheable and n >= int(w.get("warmup_min_tasks", 3))):
+        # One transaction at a time per model and static prompt (see warm_lock), so jobs submitted together agree
+        # on one warm-up, and a warm-up cannot finish between being chosen here and the calls below being stored.
+        await warm_lock(conn, model, h)
         cur = await conn.execute(
             "SELECT 1 FROM cache_warm WHERE model = %s AND prefix_hash = %s "
             "AND warmed_at > clock_timestamp() - make_interval(secs => %s)", (model, h, float(w.get("warmup_ttl_s", 240))))
-        if await cur.fetchone() is None:
+        warm = await cur.fetchone() is not None
+        if not warm:
+            # Another job's warm-up for the same prompt may be on its way. Wait for that one; do not send a second.
+            # Only one that is already sent, or that sits ahead of this job in the queue: this job must not wait
+            # behind work it would otherwise go ahead of.
+            cur = await conn.execute(
+                "SELECT task_id FROM tasks WHERE kind = 'warmup' AND state IN ('ready', 'running') AND model = %s "
+                "AND payload->>'prefix_hash' = %s "
+                "AND (state = 'running' OR (priority_rank, job_submitted_at) <= (%s, %s)) "
+                "ORDER BY (state = 'running') DESC, priority_rank, job_submitted_at, task_id LIMIT 1",
+                (model, h, job["priority_rank"], job["submitted_at"]))
+            other = await cur.fetchone()
+            if other is not None:
+                gate_id, shared_gate = other["task_id"], True
+        if not warm and gate_id is None:
             seq = await _take_seq(conn, job_id, 1)
             cur = await conn.execute(
                 """INSERT INTO tasks (job_id, node_id, kind, seq, state, model, priority_rank, job_submitted_at,
@@ -320,8 +338,17 @@ async def plan_target(conn: psycopg.AsyncConnection, cfg: Section, job: dict, sr
         await emit(conn, "filter_applied", job_id=job_id, node_id=nid,
                    data={"kept": kept, "rule": flows.describe_rule(ed.get("rule"))})
     await emit(conn, "step_planned", job_id=job_id, node_id=nid, model=model,
-               data={"tasks": n, "kept": kept, "instruction": ins, "warmup": gate_id is not None,
+               data={"tasks": n, "kept": kept, "instruction": ins, "warmup": gate_id is not None and not shared_gate,
+                     "shared_warmup": shared_gate,
                      "window": ed["window"], "overlap": ed["overlap"], "references": [r["label"] for r in refs]})
+
+
+async def warm_lock(conn: psycopg.AsyncConnection, model: str, prefix_hash: str | None) -> None:
+    """Held to the end of the transaction. Taken by a planner before it chooses a warm-up to wait for, and by
+    anything that ends a warm-up and releases the calls waiting for it. Without it a warm-up could finish in the
+    moment between a planner choosing it and storing its waiting calls, and those calls would wait for ever."""
+    if prefix_hash:
+        await conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"de_warm:{model}:{prefix_hash}",))
 
 
 async def _take_seq(conn: psycopg.AsyncConnection, job_id: str, n: int) -> int:
@@ -405,7 +432,16 @@ async def fail_job(conn: psycopg.AsyncConnection, job_id: str, error: str, state
         "AND state IN ('queued','running') RETURNING job_id", (state, error, job_id))
     if await cur.fetchone() is None:
         return
+    cur = await conn.execute(
+        "SELECT DISTINCT model, payload->>'prefix_hash' AS h FROM tasks WHERE job_id = %s AND kind = 'warmup' "
+        "AND state IN ('ready', 'running') ORDER BY 1, 2", (job_id,))
+    for r in await cur.fetchall():
+        await warm_lock(conn, r["model"], r["h"])
     await conn.execute("UPDATE tasks SET state = 'cancelled' WHERE job_id = %s AND state IN ('waiting','ready')", (job_id,))
+    # Calls of other jobs that were waiting for a warm-up of this job run without it.
+    await conn.execute(
+        "UPDATE tasks SET state = 'ready', gate_task_id = NULL WHERE state = 'waiting' AND job_id <> %s AND gate_task_id IN "
+        "(SELECT task_id FROM tasks WHERE job_id = %s AND kind = 'warmup' AND state = 'cancelled')", (job_id, job_id))
     await conn.execute(
         "UPDATE job_steps SET state = %s, finished_at = clock_timestamp() WHERE job_id = %s AND state <> 'done'",
         ("cancelled" if state == "cancelled" else "failed", job_id))

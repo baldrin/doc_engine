@@ -95,7 +95,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     node_id          text NOT NULL,
     kind             text NOT NULL DEFAULT 'call',      -- call | warmup
     seq              int  NOT NULL,                     -- creation order within the job
-    state            text NOT NULL DEFAULT 'ready',     -- waiting | ready | running | done | failed | cancelled
+    state            text NOT NULL DEFAULT 'ready',     -- waiting | ready | running | lost | done | failed | cancelled
     model            text NOT NULL,
     priority_rank    int  NOT NULL,
     job_submitted_at timestamptz NOT NULL,
@@ -122,10 +122,14 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 -- A call that failed with a gateway error is not sent again before this time.
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS not_before timestamptz;
+-- How many times this call was returned to the queue because its worker was lost or its lease ran out.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS recoveries int NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS tasks_ready_idx ON tasks (model, priority_rank, job_submitted_at, seq, task_id) WHERE state = 'ready';
 CREATE INDEX IF NOT EXISTS tasks_job_idx ON tasks (job_id, node_id);
 CREATE INDEX IF NOT EXISTS tasks_running_idx ON tasks (lease_expires_at) WHERE state = 'running';
 CREATE INDEX IF NOT EXISTS tasks_gate_idx ON tasks (gate_task_id) WHERE state = 'waiting';
+CREATE INDEX IF NOT EXISTS tasks_lost_idx ON tasks (task_id) WHERE state = 'lost';
+CREATE INDEX IF NOT EXISTS tasks_warmup_idx ON tasks (model) WHERE kind = 'warmup' AND state IN ('ready', 'running');
 
 -- One row per model: its limits (copied from configuration at startup) and the ledger state.
 -- This row is the single authority on what may be sent. Admission and completion lock it.
@@ -243,6 +247,24 @@ CREATE TABLE IF NOT EXISTS workers (
 -- up to hold_max_s. hold_streak counts the rounds in a row that ended in a rejection.
 ALTER TABLE quota ADD COLUMN IF NOT EXISTS hold_max_s double precision NOT NULL DEFAULT 15;
 ALTER TABLE quota ADD COLUMN IF NOT EXISTS hold_streak int NOT NULL DEFAULT 0;
+-- The output cap the last admission check used. In `duration` mode it depends on the step being admitted.
+ALTER TABLE quota ADD COLUMN IF NOT EXISTS cap_used double precision;
+
+-- Calls admitted per model and minute. The queries-per-hour check adds up at most 61 rows of this table;
+-- counting an hour of reservations on every admission got slower as volume grew.
+CREATE TABLE IF NOT EXISTS quota_minutes (
+    model  text NOT NULL,
+    minute timestamptz NOT NULL,
+    n      int NOT NULL DEFAULT 0,
+    PRIMARY KEY (model, minute)
+);
+-- First start after an upgrade: fill the last hour from the reservations, once.
+INSERT INTO quota_minutes (model, minute, n)
+    SELECT model, date_trunc('minute', admitted_at), count(*) FROM reservations
+    WHERE admitted_at > clock_timestamp() - interval '61 minutes'
+      AND NOT EXISTS (SELECT 1 FROM quota_minutes)
+    GROUP BY 1, 2
+    ON CONFLICT DO NOTHING;
 
 -- ---------------------------------------------------------------------------------------------
 -- Admission in one round trip.
@@ -303,9 +325,12 @@ BEGIN
         ) h ON true
         ORDER BY h.priority_rank, h.job_submitted_at, qq.model
     LOOP
+        -- SKIP LOCKED: a call that another transaction is changing right now (a job being cancelled, say) is
+        -- passed over, so admission never waits on a row lock while it holds the quota rows.
         SELECT * INTO t FROM tasks WHERE model = q.model AND state = 'ready'
               AND (not_before IS NULL OR not_before <= clock_timestamp())
-            ORDER BY priority_rank, job_submitted_at, seq, task_id LIMIT 1;
+            ORDER BY priority_rank, job_submitted_at, seq, task_id LIMIT 1
+            FOR UPDATE SKIP LOCKED;
         IF NOT FOUND THEN
             CONTINUE;
         END IF;
@@ -346,7 +371,7 @@ BEGIN
         IF q.capacity_mode = 'duration' THEN
             -- In-flight calls are charged when they complete, on average half a call duration from now,
             -- and the bucket refills in the meantime. So the cap is the bucket plus half a call of refill.
-            cap := (q.bucket_measured + rate * 0.5 * CASE WHEN p.n IS NOT NULL AND p.n >= 3 AND p.dur_mean > 0
+            cap := (q.bucket_measured + rate * 0.5 * CASE WHEN q.learn AND p.n IS NOT NULL AND p.n >= 3 AND p.dur_mean > 0
                                                           THEN p.dur_mean ELSE q.default_call_s END)
                    * (1 - q.safety_margin);
         END IF;
@@ -363,8 +388,9 @@ BEGIN
             excess := v_in + est_in - q.in_capacity;
             w := excess / (greatest(q.itpm, 1) / 60.0);
         ELSIF q.qph > 0 THEN
-            SELECT count(*) INTO q_hour FROM reservations
-                WHERE model = q.model AND admitted_at > now_db - interval '1 hour';
+            -- Whole minutes, so up to one minute more than the hour is counted: the check errs on the safe side.
+            SELECT coalesce(sum(n), 0) INTO q_hour FROM quota_minutes
+                WHERE model = q.model AND minute > now_db - interval '61 minutes';
             IF q_hour + 1 > q.qph THEN
                 reason := 'queries';
                 w := 1.0;
@@ -381,7 +407,7 @@ BEGIN
             best_wait := least(coalesce(best_wait, w), w);
             last_reason := reason;
             last_detail := detail;
-            UPDATE quota SET blocked_checks = blocked_checks + 1 WHERE model = q.model;
+            UPDATE quota SET blocked_checks = blocked_checks + 1, cap_used = cap WHERE model = q.model;
             CONTINUE;
         END IF;
 
@@ -393,8 +419,10 @@ BEGIN
                 started_at = coalesce(started_at, now_db), reservation_id = res_id
             WHERE task_id = t.task_id;
         UPDATE quota SET out_level = v_out, in_level = v_in + est_in, updated_at = now_db,
-                admissions = admissions + 1
+                admissions = admissions + 1, cap_used = cap
             WHERE model = q.model;
+        INSERT INTO quota_minutes AS m (model, minute, n) VALUES (q.model, date_trunc('minute', now_db), 1)
+            ON CONFLICT (model, minute) DO UPDATE SET n = m.n + 1;
         UPDATE jobs SET state = 'running', started_at = now_db
             WHERE job_id = t.job_id AND started_at IS NULL RETURNING job_id INTO started;
         IF started IS NOT NULL THEN
@@ -494,7 +522,10 @@ $$;
 
 -- Returns tasks to the queue when their lease ran out or their worker stopped heartbeating.
 -- The lost call may still complete and be charged at the gateway, so its expected output is kept in the level.
-CREATE OR REPLACE FUNCTION de_reap(p_dead_after_s double precision)
+-- A call returned more than p_max_recoveries times is not queued again: it is set to 'lost', which no admission
+-- picks up, and the worker then fails its job. 0 means no limit.
+DROP FUNCTION IF EXISTS de_reap(double precision);
+CREATE OR REPLACE FUNCTION de_reap(p_dead_after_s double precision, p_max_recoveries int DEFAULT 0)
 RETURNS int LANGUAGE plpgsql AS $$
 DECLARE
     t record;
@@ -502,7 +533,7 @@ DECLARE
     r reservations%ROWTYPE;
 BEGIN
     FOR t IN
-        SELECT tk.task_id, tk.job_id, tk.node_id, tk.model, tk.reservation_id, tk.lease_owner
+        SELECT tk.task_id, tk.job_id, tk.node_id, tk.model, tk.reservation_id, tk.lease_owner, tk.recoveries
         FROM tasks tk LEFT JOIN workers w ON w.worker_id = tk.lease_owner
         WHERE tk.state = 'running'
           AND (tk.lease_expires_at < clock_timestamp()
@@ -514,13 +545,16 @@ BEGIN
             SELECT * INTO r FROM reservations WHERE reservation_id = t.reservation_id;
             PERFORM de_release(t.reservation_id, 'expired', r.counted_output, r.counted_input);
         END IF;
-        UPDATE tasks SET state = 'ready', lease_owner = NULL, lease_expires_at = NULL, reservation_id = NULL
+        UPDATE tasks SET state = CASE WHEN p_max_recoveries > 0 AND t.recoveries + 1 > p_max_recoveries
+                                      THEN 'lost' ELSE 'ready' END,
+                lease_owner = NULL, lease_expires_at = NULL, reservation_id = NULL, recoveries = recoveries + 1
             WHERE task_id = t.task_id;
         INSERT INTO events (kind, job_id, node_id, task_id, model, data)
             VALUES ('task_recovered', t.job_id, t.node_id, t.task_id, t.model,
                     jsonb_build_object('previous_owner', t.lease_owner));
         n := n + 1;
     END LOOP;
+    DELETE FROM quota_minutes WHERE minute < clock_timestamp() - interval '3 hours';
     IF n > 0 THEN
         PERFORM pg_notify('de_wake', 'reap');
     END IF;
