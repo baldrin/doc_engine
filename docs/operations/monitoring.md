@@ -47,7 +47,7 @@ operator reads from it.
 | **Interactive lane** | **Clear**, or how many calls of interactive jobs are waiting. Interactive calls go before bulk calls. |
 | **Shared quota, by model** | Per model, three bars: **Output tokens per minute** and **Input tokens per minute** (what completed in the last 60 seconds, against the limit) and **Burst budget in use** (output charged plus output expected from calls in flight, against the output cap). The mark on a bar is the ceiling the scheduler stays under. |
 | The line beside a model's name | `N in flight · N ready`, or **paused after a rejection** while admission for that model is held. |
-| The **Jobs** table | Per job: place in the queue, priority, status, progress as calls done out of calls planned, calls in flight, rejections and elapsed time. Click a row to open its Run screen. |
+| The **Jobs** table | Per job: place in the queue, priority, status, progress as calls done out of calls planned, calls in flight, rejections and elapsed time. Click a row to open its Run screen. A queued or running job has a **Cancel** button, which asks for confirmation first. |
 
 Things to act on:
 
@@ -57,8 +57,12 @@ Things to act on:
 - A model that shows **paused after a rejection** again and again.
 
 > **Note:** in `duration` capacity mode the cap used for admission is worked out per call from
-> `bucket_measured` and the learned call length. The **Burst budget in use** bar still compares against the
-> fixed cap, `bucket_capacity_output` less the safety margin.
+> `bucket_measured` and the call length. The **Burst budget in use** bar compares against the cap that
+> admission last used. Before any admission it uses the cap for a call of the default length,
+> `ledger.default_call_s`.
+
+A model that was taken out of the settings leaves these panels at the next start, once none of its calls are
+waiting or in flight.
 
 ## The Run screen
 
@@ -85,6 +89,7 @@ Lines in **Live events** that matter to operations:
 | `<step> · retrying (...)` | A timeout, a gateway error or a reply that did not match its schema. The call is tried again. |
 | `<step> · warm-up failed, continuing without the cache` | A warm-up call failed. The step runs without the prompt cache; the job is not affected otherwise. |
 | `<step> · a lost call was returned to the queue` | A worker stopped, or a call outlived its lease, and the call was recovered. |
+| `<step> · this call was returned to the queue N times because the worker sending it stopped each time. It was not sent again.` | The same call was lost more than `ledger.max_recoveries_per_call` times. The job fails. |
 | `<step> · ... · cut off at max output` | A reply reached the step's maximum output and was truncated. |
 | `Run failed · <step>: <reason>` | The job failed. The reason is the same text as the job's error. See [Troubleshooting](troubleshooting.md#a-job-failed). |
 
@@ -124,7 +129,7 @@ One snapshot of the ledger and the queue. The screens receive the same data once
 |---|---|
 | `models[].model`, `gateway_name` | The model's key and the name sent to the gateway. |
 | `models[].otpm`, `itpm` | The configured limits. |
-| `models[].out_capacity`, `in_capacity` | The output cap and input cap, safety margin applied. |
+| `models[].out_capacity`, `in_capacity` | The output cap and input cap, safety margin applied. In `duration` capacity mode `out_capacity` is the cap that admission last used, or, before any admission, the cap for a call of the default length. |
 | `models[].capacity_mode` | `fixed` or `duration`. |
 | `models[].out_level` | Output charged to the ledger and not yet drained, as of now. |
 | `models[].open_calls`, `open_output` | Calls in flight, and the output they are expected to produce. |
@@ -176,6 +181,9 @@ SELECT model, capacity_mode, out_capacity,
 FROM quota
 ORDER BY model;
 ```
+
+In `duration` capacity mode, the cap that admission last used is in the column `cap_used`; `out_capacity`
+holds the fixed cap.
 
 ### What is waiting, per model
 
@@ -295,7 +303,7 @@ Informational lines at start and stop:
 |---|---|
 | `gateway client: base_url=... max_retries=0 timeout=...s http max_connections=...` | The gateway client was created. Printed once per worker. Confirms the address and the connection limit in use. |
 | `tables missing: applying the schema` | First start on an empty database. |
-| `no flows yet: creating the sample flows and documents` | The samples are being installed. |
+| `empty database: creating the sample flows and files` | The samples are being installed. |
 | `worker <id> starting: concurrency=N` | A worker started. |
 | `worker <id> stopped` | A worker stopped cleanly. |
 

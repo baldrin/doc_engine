@@ -30,7 +30,7 @@ Within a model's queue, tasks are ordered by:
 2. **Job submission time.** Within the same priority, the job submitted earlier comes first.
 3. **Task order.** Within a job, tasks come in the order they were created.
 
-The task at the front after this ordering is the **head**. It is the only task the ledger considers.
+The task at the front after this ordering is the **head**. It is the only task the ledger considers. There is one exception: a task that another transaction is changing at that very moment, for example because its job is being cancelled, is passed over, and the next task is taken as the head for that one check.
 
 A task keeps its place when it returns to the queue. A call that the gateway rejected, a call being retried, and a call recovered from a lost worker all go back to where the rule puts them, which is normally the front of their job, not the end of the queue.
 

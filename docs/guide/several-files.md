@@ -98,7 +98,7 @@ Sometimes the builder's guess is the wrong way round, because the block you conn
 1. Select the step and open the **Input** tab.
 2. Under **References**, choose **Make input** on the row of the block the step should work through.
 
-Either way, the chosen connection becomes the input and the previous input becomes a reference. Then check the **Instruction** on the **Input** tab, because the new input starts with a default: Map with window 1 and overlap 0 when it comes from a source, Reduce when it comes from a step.
+Either way, the chosen connection becomes the input and the previous input becomes a reference. Then check the **Instruction** on the **Input** tab. A connection that was the step's input before gets back the instruction, window, overlap and rule it had then. One that has never been the input starts with a default: Map with window 1 and overlap 0 when it comes from a source, Reduce when it comes from a step.
 
 The right-click menu of an input connection has the opposite item, **Use as a reference**. It turns the step's input into a reference and leaves the step with nothing to work through, which the builder reports as a problem until you make another connection the input.
 
@@ -131,7 +131,7 @@ On the [Results screen](results-screen.md), such a reference opens that page of 
 
 This is why source names should be short, distinct and stable. If you rename a source, runs made after the change use the new name; each job keeps the names it ran with.
 
-The citation rule is added to steps with a text output and **Track source pages** switched on; see [Steps](steps.md#track-source-pages).
+The citation rule is added to steps with a text output and **Cite pages in the text** switched on; see [Steps](steps.md#cite-pages-in-the-text).
 
 ## Two sample flows to study
 

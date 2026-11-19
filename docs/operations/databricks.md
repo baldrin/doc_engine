@@ -106,14 +106,14 @@ On every start, in this order:
    versions of the functions that admit and complete calls. It needs permission to create tables and functions
    in the database. It keeps existing data.
 2. Copies each model's limits from the settings into the `quota` table. The ledger's running state is kept.
-3. If there are no flows, creates the four sample flows and the ten sample files. This takes a few seconds.
+3. If the database holds no flows and no files, creates the four sample flows and the ten sample files. This takes a few seconds.
    The sample flows are created already published, so the [public endpoint](../api/README.md) has something to
    call from the start.
 4. Starts the worker inside the process, unless `worker.enabled` is `false`.
 5. Listens on `DATABRICKS_APP_PORT`.
 
-> **Note:** step 3 looks only at whether any flow exists. If every flow is deleted, the samples come back at
-> the next start.
+> **Note:** step 3 runs only on a database that has never held anything. If every flow is deleted, the samples
+> do not come back at the next start. To get them back, run `python -m doc_engine samples`.
 
 ## Running several instances
 

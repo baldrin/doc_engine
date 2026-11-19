@@ -47,7 +47,7 @@ always shows the same thing.
 | **Interactive** or **Bulk** | The job's priority. See [Queue and priority](../how-it-works/queue-and-priority.md). |
 | **Elapsed** | Time since the job was submitted, in minutes and seconds. It stops when the run ends. |
 | **Calls done** | Model calls completed, out of the calls planned so far. |
-| **Cancel** | Stops the run. Shown until the run has ended. |
+| **Cancel** | Stops the run, after a confirmation. Shown until the run has ended. |
 | **Replay** | Plays the run back. Shown once the run has ended. |
 | **View results** | Opens the [Results screen](results-screen.md). Shown once the run is complete. |
 
@@ -113,7 +113,7 @@ When the run ends, a card appears over the flow.
 
 | Run | The card says |
 |---|---|
-| **Run complete** | The number of calls, the number of rejections, the time taken and the cost, then how many outputs are ready. A **Results** button opens the [Results screen](results-screen.md). |
+| **Run complete** | The number of calls, the number of rejections, the time taken and the cost, then how many outputs are ready, for example **2 outputs ready**. A **Results** button opens the [Results screen](results-screen.md). |
 | **Run failed** | The same figures, then the error that ended the run. The error starts with the name of the step it happened in. |
 | **Run cancelled** | The same figures, then **Cancelled**. |
 
@@ -269,7 +269,7 @@ run's record, so they are absent when you reload the page and during a replay.
 
 ## Cancel a run
 
-Select **Cancel** in the top bar. The run is cancelled at once, without a confirmation question.
+Select **Cancel** in the top bar. The browser asks for confirmation: **Cancel this run? Calls already sent will finish and be paid for; their replies are not used.** Confirm to cancel. The same can be done from the **Jobs** table of the [Activity screen](activity-screen.md#cancel-a-job).
 
 - Tasks that had not been sent are dropped.
 - Calls already in flight finish at the gateway, are paid for, and their results are discarded.

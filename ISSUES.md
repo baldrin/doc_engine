@@ -1,6 +1,6 @@
 # Known issues, by priority
 
-Written 2026-11-18. These were found by reading the code while writing the documentation. Nothing here has
+Written 2026-11-18 and updated the same night after a second round of fixes. These were found by reading the code while writing the documentation. Nothing here has
 been seen on the real gateway: the code has only run against the fake gateway. Fixed issues are listed at
 the end; the numbers of the others are unchanged.
 
@@ -16,64 +16,23 @@ None open. Issues 1 to 7 were fixed on 2026-11-18; see [Fixed](#fixed) at the en
 
 ## Priority 2
 
-### Scheduler and worker
+Two remain, both waiting on the choice of sign-in for the Databricks deployment (Databricks, Entra ID, OAuth2).
 
 | # | Issue | What happens | Where | Suggested fix |
 |---|---|---|---|---|
-| 10 | **A task whose worker dies never uses an attempt.** | A call that reliably kills its worker would be returned to the queue without end. | `de_reap` | Count recoveries and fail the task after a few. |
-| 11 | **The queries-per-hour check counts the last hour's calls on every admission**, with the model's quota row locked. | Admission gets slower as hourly volume grows. The check is always on, since `qph` is set for every model. | `de_admit` | Keep a running counter per minute instead of counting rows. |
-| 13 | **Jobs submitted together do not share a warm-up.** | The shared entry is written when a warm-up completes, so ten jobs submitted at once each send their own. Later jobs do share. | `planner.py`, `cache_warm` | Record a warm-up as "in progress" when it is planned and let other jobs wait on it. |
-| 14 | **`duration` capacity mode has two faults.** | It uses the learned call length even when `ledger.learn_estimates` is false. The screens and `/api/quota` show the `fixed` cap, not the one admission uses. | `de_admit`; `quota_snapshot` in `api.py` | Honour the setting; report the cap admission used. |
 | 15 | **The saturation confirmation looks at one request only.** | It ignores what is already queued. The public endpoint has no such check and no limit on requests. | `POST /api/jobs`; `public_api.py` | A decision, tied to authentication and job owners. |
-
-### Setup and commands
-
-| # | Issue | What happens | Where | Suggested fix |
-|---|---|---|---|---|
-| 21 | **`load` differs from the application.** | No 50-job limit. `--dry-run` still needs the database and rewrites the quota limits. A `--value` without `=` is dropped silently. | `cli.py` | Apply the same limit; make dry run read-only; refuse a malformed value. |
-| 22 | **`export` with an unknown job id** writes six empty files and reports success. | | `cli.py` | Exit with "job not found". |
-| 23 | **`samples`, `jobs`, `export` and `worker` do not check for missing tables.** | They fail with a raw Postgres error before `db init`. | `cli.py` | Use the check the other commands use. |
-| 25 | **Uploads are read fully into memory** before the 200 MB check. | A very large upload uses that much memory first. | `api.py`, `public_api.py` | Stop reading at the limit. |
 | 26 | **No sign-in anywhere.** | Anyone who can reach the application can run flows, read results and remove files. On Databricks Apps the platform decides who can reach it. | whole application | A decision for the Databricks sessions. |
-
-### Screens
-
-| # | Issue | What happens | Where | Suggested fix |
-|---|---|---|---|---|
-| 29 | **Save version does not validate.** | A flow with errors gets a version number. Save version and Publish always create a new version, even with no change. | `save_version` in `api.py` | Validate; skip when nothing changed. |
-| 32 | **The estimate and the planner disagree in small ways.** | Different caching rules; the estimate leaves out the output contract and citation rule; a Filter call is always estimated at 1 page; warm-up calls are not counted. | `planner.py` | One shared calculation. |
-| 35 | **"Track source pages" does nothing on schema steps**, but can be switched there. Its subtitle describes something that happens regardless. | | `prompts.py`, `Builder.tsx` | Hide it on schema steps; reword. |
-| 36 | **Max output tokens of 0 or empty silently becomes 1,500.** | The "above zero" check only fires for negative values. | `step_data` in `flows.py` | Report it. |
-| 39 | **Activity ignores the files chosen in the builder.** | The builder remembers them in the browser; Activity prefills only sample defaults or a file named like the source. | `Activity.tsx` | Read the same remembered choice. |
-| 41 | **The Files screen does not refresh.** | A Remove button stays disabled after the run using the file has finished, until reload. | `Files.tsx` | Refresh on a timer or on focus. |
-| 42 | **Deleting a flow shows nothing on failure.** | | `Flows.tsx` | Show the error, as create and duplicate do. |
-| 44 | **Zip files get the office-file message** ("Save it as a PDF"). | | `documents.py` | Tell a plain zip from an office file. |
-| 45 | **Re-uploading a file says "uploaded".** | Same content and name returns the existing file. If that file came through the API it stays hidden from the builder's pickers. | `Files.tsx`, `documents.py` | Say "already here"; show the file in pickers once uploaded from the screen. |
-| 46 | **Model and Max output tokens appear on two tabs of a step.** | The same row is on the Prompt tab and the Model tab. It is one setting shown twice, which reads as two. Noted by the owner on 2026-11-18. | `Builder.tsx` (`modelRow`) | Remove the row from the Prompt tab; keep it on the Model tab. Update `docs/guide/steps.md`. |
 
 ## Priority 3
 
-- **Flow card "blocks" count** is nodes minus one, so extra sources count as blocks.
-- **Validation wording** ("Set one connection to Input") does not match the controls ("Make input", "Use as a reference").
-- **Switching a connection between input and reference** resets its instruction, window and rule.
 - **API panel examples always end in `.pdf`**, and the panel names `docs/api` as plain text, not a link.
-- **Shortcut hints say "Ctrl D" only**; Cmd+D also works.
-- **"View last outputs"** is only in the right-click menu, not in the step panel.
 - **`not_equals` keeps items whose field is missing.** Documented, but may surprise.
-- **Cancel on the Run screen has no confirmation.**
-- **"Back to the run" on Results** uses browser history, so from a direct link it does not go to the run.
-- **No truncation marker in table form**; the Run screen card always says "every finding linked to its pages".
-- **The CSV button** shows whenever any item has structured data, even for a text output.
 - **Scheduler lines in the Run feed** are made in the browser. They vanish on reload and in replay, and count waiting calls of all jobs.
 - **The interactive lane tile on Run** counts interactive calls across all models, so a bulk run can show "Going first" for a model it does not use.
 - **Queue positions on Activity** are worked out in the browser from the latest 80 jobs, across models, so they are approximate.
-- **`saturating_jobs: 1` would block test runs**, since the Test run dialog has no confirmation step.
-- **Sample flows come back** on the next start if every flow is deleted.
-- **A model removed from the settings keeps its quota row** and still shows in the quota panels.
-- **`cmd_worker` does not close the database** on exit.
-- **No Python version is declared.** Developed on 3.12; the installed packages need 3.11 or newer.
 - **`/api/estimate` and some comments still say "documents".** No effect on screen.
-- **`load --dry-run`** passes neither keep ratios nor per-file page sizes to the estimate.
+- **Output contract and "Cite pages in the text" are on both the Prompt and Output tabs of a step.** Left in place: only the Model row was asked to go (issue 46). The same reasoning may apply.
+- **A job that fails while its calls are being admitted can meet a database deadlock**, which Postgres resolves by cancelling one side; the recording is then tried again. Admission now skips locked calls, which removes the case that was found. Listed so a reviewer looks for others.
 
 ## Feature ideas, not started
 
@@ -128,7 +87,8 @@ calls and suggests improvements. A person accepts or ignores each suggestion.
 
 ## Fixed
 
-Fixed on 2026-11-18 and checked on the fake gateway or in the browser, except where noted.
+Fixed on 2026-11-18 and checked on the fake gateway or in the browser, except where noted. The fixes from
+number 10 down in this table were also run through `python tests/e2e.py`, which makes 48 checks against the fake gateway.
 
 | # | Issue | What changed |
 |---|---|---|
@@ -158,3 +118,24 @@ Fixed on 2026-11-18 and checked on the fake gateway or in the browser, except wh
 | 9 | The 429 hold is 1 second. | The pause now doubles while rejections continue: 1, 2, 4, 8, then 15 seconds (`ledger.hold_on_429_max_s`), and returns to 1 second after an accepted call. Checked on a fake gateway with a tiny bucket. The real gateway's behaviour after an overrun is still to be seen in session 1. |
 | 12 | An invalid schema reply gets two retries, not one. | Kept at two retries by decision: a retry often succeeds. A reply cut off at max output tokens is no longer retried; the job fails at once with advice to raise the limit. Checked. |
 | 24 | `config.fake.yaml` expected Postgres on port 54329; `scripts/dev_up.sh` sets no port. | The fake settings file leaves the port empty, so it uses `PGPORT`, then 5432, as the setup script does. Checked with `PGPORT` set. |
+| 10 | A task whose worker dies never uses an attempt. | Each return to the queue is counted. A call returned more than `ledger.max_recoveries_per_call` times (default 3) is set aside and its job fails with a message. Checked in the end-to-end run. |
+| 11 | The queries-per-hour check counted an hour of calls on every admission. | Admissions are counted per model and minute; the check adds up at most 61 rows. |
+| 13 | Jobs submitted together did not share a warm-up. | A job waits for another job's warm-up for the same model and prompt when that one is already sent or ahead of it in the queue. If the owner is cancelled, the waiting calls run without it. Checked: ten jobs at once send one warm-up per prompt, in six rounds running. |
+| 14 | `duration` capacity mode had two faults. | The learned call length is used only when `ledger.learn_estimates` is true. The quota panels and `/api/quota` show the cap admission last used. |
+| 21 | `load` differed from the application. | The 50-job limit applies. A dry run changes nothing in the database. A malformed `--value` or `--document` is refused. |
+| 22 | `export` with an unknown job id wrote empty files. | It prints "job not found" and exits 1. |
+| 23 | Some commands did not check for missing tables. | `samples`, `jobs`, `export` and `worker` say to run `db init` first. |
+| 25 | Uploads were read fully into memory before the size check. | Reading stops at 200 MB. Not exercised with a file that large. |
+| 29 | Save version did not validate, and always made a new version. | A flow with errors is not saved as a version. Save version and Publish make no new version when nothing changed. |
+| 32 | The estimate and the planner disagreed in small ways. | The estimate uses the planner's caching rule and prompt text, sizes a filter-fed call by its upstream item, and shows warm-up calls apart. They are still two pieces of code. |
+| 35 | "Track source pages" did nothing on schema steps. | Renamed "Cite pages in the text", with a subtitle that says what it does, and hidden on schema steps. |
+| 36 | Max output tokens of 0 or empty silently became 1,500. | It is reported as a problem. |
+| 39 | Activity ignored the files chosen in the builder. | Activity starts from the file remembered for each source. Not viewed in a browser. |
+| 41 | The Files screen did not refresh. | It refreshes every few seconds and when the window regains focus. Not viewed in a browser. |
+| 42 | Deleting a flow showed nothing on failure. | It shows the error, or a confirmation. Not viewed in a browser. |
+| 44 | Zip files got the office-file message. | A zip archive has its own message. |
+| 45 | Re-uploading a file said "uploaded". | It says "already here", and a file first sent through the endpoint then shows in the builder's pickers. |
+| 46 | Model and Max output tokens appeared on two tabs of a step. | The row is on the Model tab only. Checked in the browser. |
+| 47 | No way to stop a job from the Activity list. | Each queued or running job has a Cancel button, with a confirmation. Cancel on the Run screen asks too. Checked in the browser. |
+| - | Smaller items from the priority 3 list. | Flow cards count every block. The "only references" message matches the controls. A connection keeps its settings when switched to a reference and back. The shortcut hint shows the Mac key on a Mac. "View last outputs" is on the Output tab. "Back to the run" goes to the run. A table output says when a reply was cut off; the end-of-run card no longer claims every finding is linked. The CSV button shows only for table outputs. One test run is never asked to confirm. Sample flows no longer come back after being deleted. A model removed from the settings leaves the quota panels. The worker command closes the database. Python older than 3.11 is refused. `load --dry-run` uses keep ratios and page sizes. |
+| - | Found while fixing: the first form of the shared warm-up could leave a job waiting for ever. | A warm-up could finish in the moment between a planner choosing it and storing the calls that wait for it. A lock per model and prompt now covers both sides. Found by the end-to-end run. |

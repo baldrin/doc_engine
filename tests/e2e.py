@@ -1,6 +1,6 @@
 """End-to-end check against the fake gateway. Not collected by pytest; run it directly:
 
-    python tests/e2e.py            # all checks, about two minutes
+    python tests/e2e.py            # all checks, a few minutes
     python tests/e2e.py --keep     # leave the test schema in place afterwards
 
 It needs a reachable Postgres (the same PG* variables or settings the application uses) and nothing else.

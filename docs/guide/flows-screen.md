@@ -66,7 +66,7 @@ move to the card with Tab and press Enter.
 | The description | The flow's description, or **No description.** when it has none. |
 | **v3**, or **Draft** | The number of the flow's latest saved version. **Draft** means no version has been saved yet. A new flow and a duplicate both start as drafts. Versions are explained in [Publishing](publishing.md). |
 | **· Published**, or **· v2 is published** | Shown after the version when the flow is published, which means it can be run by name from outside Document Engine. **Published** means the version shown is the published one. **v2 is published** means a newer version has been saved since, and callers still get version 2. See [Publishing](publishing.md). |
-| **5 blocks** | The size of the flow: the number of blocks on its canvas, less one. For a flow with one source this is the number of steps and outputs. |
+| **5 blocks** | The size of the flow: the number of blocks on its canvas, counting every source, step and output. |
 | **12 runs** | How many jobs have been started from this flow, from any screen. Tests of a single step count too. |
 | **Last run 3 h ago** | When the most recent of those jobs was submitted, or **Last run never**. |
 | **Edited 2 d ago** | When the flow was last saved. Saving a version, publishing and unpublishing also count as edits. |
@@ -99,6 +99,7 @@ Duplicating is the way to change a sample flow without losing the original.
 
 1. Select **Delete** on the flow's card.
 2. The browser asks: **Delete "name"? Its past runs stay in Activity.** Confirm to delete.
+3. A message at the bottom of the screen confirms it: the flow's name and **deleted**. If the flow could not be deleted, the message gives the error instead.
 
 The flow and its saved versions are removed and this cannot be undone. Jobs that ran the flow are kept: they
 remain in the [Activity screen](activity-screen.md) and their [results](results-screen.md) can still be opened,

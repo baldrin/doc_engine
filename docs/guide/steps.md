@@ -15,7 +15,7 @@ A step is a template for model calls: a prompt, a model, limits and a descriptio
 - [Expected output tokens per call](#expected-output-tokens-per-call)
 - [Thinking](#thinking)
 - [Output contract](#output-contract)
-- [Track source pages](#track-source-pages)
+- [Cite pages in the text](#cite-pages-in-the-text)
 - [Test this step](#test-this-step)
 - [View last outputs](#view-last-outputs)
 
@@ -25,12 +25,12 @@ Select a step on the canvas. The right-hand panel shows its name and four tabs:
 
 | Tab | Settings |
 |---|---|
-| **Prompt** | **System**, **Instructions**, inserting flow inputs; and, for convenience, **Model**, **Max output tokens**, **Output contract** and **Track source pages**. |
+| **Prompt** | **System**, **Instructions**, inserting flow inputs; and, for convenience, **Output contract** and **Cite pages in the text**. |
 | **Model** | **Model**, **Max output tokens**, **Thinking**, **Expected output tokens per call**. |
 | **Input** | The [instruction](instructions.md) and the step's [references](several-files.md#references). These belong to the connections into the step, and are explained on those pages. |
-| **Output** | **Output contract**, the schema **Fields**, **Track source pages**. |
+| **Output** | **Output contract**, the schema **Fields**, **Cite pages in the text**, and the **View last outputs** button. |
 
-Some settings appear on two tabs. They are the same setting; change it in either place.
+**Output contract** and **Cite pages in the text** appear on two tabs. They are the same setting; change it in either place. **Model** and **Max output tokens** are on the **Model** tab only.
 
 A step makes one call for each window, item or set of items its instruction gives it. Every call of a step uses the same settings. What differs between calls is only the material: which pages, or which earlier outputs.
 
@@ -67,8 +67,8 @@ Each call is built from your prompt and from material the engine supplies. Knowi
 2. Your **Instructions** text.
 3. One of the following:
    - for a schema output, the output contract: an instruction to reply with one JSON object and nothing else, followed by the schema built from your fields;
-   - for a text output with **Track source pages** on, the citation rule: an instruction to cite the page or pages behind each statement in square brackets;
-   - for a text output with **Track source pages** off, nothing.
+   - for a text output with **Cite pages in the text** on, the citation rule: an instruction to cite the page or pages behind each statement in square brackets;
+   - for a text output with **Cite pages in the text** off, nothing.
 
 **The material**, different for each call, in this order:
 
@@ -103,7 +103,7 @@ The **Model** tab shows, under the settings, the chosen model's limits (output a
 
 ## Max output tokens
 
-**Max output tokens** is the most the model may write in one call. A new step has 1500. An empty field or 0 is treated as 1500, and a value below zero is reported as a problem.
+**Max output tokens** is the most the model may write in one call. A new step has 1500. An empty field or 0 is reported as a problem: *step* **needs Max output tokens above zero.** The flow cannot run until a value is entered.
 
 - If a reply reaches the limit, it is cut off there. A cut-off text reply is kept and marked as cut off (**cut off at max output** in [View last outputs](#view-last-outputs)). A cut-off schema reply is usually incomplete JSON, so it fails the [schema check](#when-a-reply-does-not-match).
 - [Thinking](#thinking) counts against this limit. A step that thinks needs room for the thinking and the reply. If thinking uses the whole limit and no reply text is left, the call counts as an empty reply and the job fails.
@@ -202,18 +202,18 @@ A call is tried a limited number of times (`worker.max_transient_attempts`, 3 by
 
 If a step's replies are often invalid, make the field descriptions more exact, reduce the number of fields, or raise **Max output tokens** in case the JSON is being cut off.
 
-> **Screenshot to add:** `images/builder-step-output-tab.png`. A step selected with the right-hand panel on the Output tab: Output contract set to Schema, three fields of different types including a "one of" field with its allowed values and a "table" field with its columns, the + Add field button, and the Track source pages switch.
+> **Screenshot to add:** `images/builder-step-output-tab.png`. A step selected with the right-hand panel on the Output tab: Output contract set to Schema, three fields of different types including a "one of" field with its allowed values and a "table" field with its columns, the + Add field button, and the View last outputs button.
 
-## Track source pages
+## Cite pages in the text
 
-**Track source pages** is a switch on the **Prompt** and **Output** tabs, described there as **Every output knows which pages it covers**. It is on for a new step.
+**Cite pages in the text** is a switch on the **Prompt** and **Output** tabs, described there as **Asks the model to mark each statement with its page, like [p. 12]**. It is on for a new step. It is shown only for a step with a **Text** output.
 
-When it is on and the step has a **Text** output, the engine adds the citation rule to the prompt: after each finding, the model is to cite the page or pages it comes from in square brackets, such as `[p. 12]` or `[pp. 12-14]`, and never to cite a page it was not shown. In a flow with [several sources](several-files.md), the citation includes the input name, such as `[Invoice p. 2]`. On the [Results screen](results-screen.md), each citation is a link that opens that page beside the text.
+When it is on, the engine adds the citation rule to the prompt: after each finding, the model is to cite the page or pages it comes from in square brackets, such as `[p. 12]` or `[pp. 12-14]`, and never to cite a page it was not shown. In a flow with [several sources](several-files.md), the citation includes the input name, such as `[Invoice p. 2]`. On the [Results screen](results-screen.md), each citation is a link that opens that page beside the text.
 
 Two things to know:
 
 - The engine records which pages each call was given whether the switch is on or off. Every item carries its pages through Map, Reduce and Filter, and a table output has a page column. The switch only controls the citation rule in the prompt.
-- For a step with a **Schema** output, the citation rule is not added, whatever the switch says: the reply must be the JSON object and nothing else.
+- A step with a **Schema** output has no switch. The citation rule is never added there: the reply must be the JSON object and nothing else.
 
 Switch it off for a text step whose output should carry no bracketed citations, for example when a later step would only be confused by them.
 
@@ -233,7 +233,7 @@ A step test runs every step the tested step depends on, so testing the third ste
 
 ## View last outputs
 
-**View last outputs**, in a step's right-click menu, shows what the step produced the last time it ran, without leaving the builder. Use it to check the effect of a prompt change after a test.
+**View last outputs**, a button on a step's **Output** tab and an item in its right-click menu, shows what the step produced the last time it ran, without leaving the builder. Use it to check the effect of a prompt change after a test.
 
 The dialog **Last outputs of** _step name_ shows up to 60 outputs from the most recent run of this flow in which the step completed a call. Each is headed by the pages it covers and the number of output tokens, with **cut off at max output** when the reply hit the limit. A text output is shown as text, a schema output as JSON. **Open that run** goes to the run they come from.
 

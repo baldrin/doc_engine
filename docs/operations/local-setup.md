@@ -97,7 +97,7 @@ Continue at [Check it before spending anything](#check-it-before-spending-anythi
    The command prints the id of every flow and file. The [`load`](commands.md#load) command takes those ids.
 
 > **Note:** steps 5 and 6 are optional if you go straight to `serve`. The application creates missing tables
-> on every start, and installs the samples when it finds no flows.
+> on every start, and installs the samples when the database has never held anything: no flows and no files.
 
 ## The token and the Postgres password
 

@@ -40,15 +40,15 @@ In total: 500 map calls, 10 reduce calls, 490,000 output tokens.
 
 Ten jobs at once is at or above `server.saturating_jobs`, so the engine asks for [confirmation](#the-saturation-confirmation) first.
 
-Each job is then stored in its own transaction, with its own copy of the flow. For each job the Map step is planned: one warm-up task in state `ready` and 50 calls in state `waiting`. The Reduce steps are not planned yet. See [Jobs and tasks](jobs-and-tasks.md#why-tasks-are-planned-one-step-at-a-time).
+Each job is then stored in its own transaction, with its own copy of the flow. For each job the Map step is planned. Job 1 gets one warm-up task in state `ready` and 50 calls in state `waiting`. Jobs 2 to 10 have the same static prompt on the same model and find job 1's warm-up ahead of them in the queue, so each gets 50 calls in state `waiting` and no warm-up of its own. The Reduce steps are not planned yet. See [Jobs and tasks](jobs-and-tasks.md#why-tasks-are-planned-one-step-at-a-time).
 
-Right after submission the queue holds 10 tasks. Another 500 exist and are waiting for their warm-ups.
+Right after submission the queue holds 1 task. Another 500 exist and are waiting for that warm-up.
 
-### 2. The warm-ups
+### 2. The warm-up
 
-A warm-up counts for one output token, so all ten are admitted at once. Each job has its own, because a warm-up is shared only once one has finished, and none has yet. See [Prompt caching](prompt-caching.md#sharing-a-warm-up-across-jobs).
+A warm-up counts for one output token, so it is admitted at once. The ten jobs share it: one warm-up is sent per model and static prompt. See [Prompt caching](prompt-caching.md#sharing-a-warm-up-across-jobs).
 
-As each warm-up completes, the 50 calls of its job become `ready`. Shortly afterwards the queue holds 500 tasks, ordered job by job: all of job 1's calls, then job 2's, and so on, because within one priority the earlier job goes first.
+When the warm-up completes, the 50 calls of every job become `ready`. The queue then holds 500 tasks, ordered job by job: all of job 1's calls, then job 2's, and so on, because within one priority the earlier job goes first.
 
 ### 3. The first burst
 
@@ -139,7 +139,7 @@ The pause is the engine's answer to being wrong about the quota. One rejection m
 
 Suppose that two minutes into the ten bulk jobs, someone starts a **Test run** as **Interactive**.
 
-1. **Its tasks go to the front.** Interactive sorts before bulk, so its first task is the head of the queue as soon as it is ready. If its static prompt is already warm from another job, its calls are ready at once; otherwise its warm-up goes first.
+1. **Its tasks go to the front.** Interactive sorts before bulk, so its first task is the head of the queue as soon as it is ready. If its static prompt is already warm from another job, its calls are ready at once; otherwise its calls wait for a warm-up of the same prompt that has already been sent, or its own warm-up goes first.
 2. **Bulk calls in flight are left alone.** Nothing is cancelled. They complete and are charged as usual.
 3. **Bulk tasks stop being admitted** on that model while the interactive job has ready tasks, because the head is always an interactive task.
 4. **The interactive job receives the whole refill.** It does not get an empty bucket: when it arrives, the bucket is full of bulk work. Its calls are admitted at the refill rate as room drains free.
@@ -194,7 +194,8 @@ A large submission can use a model's whole quota for minutes. Every other applic
 - On the **Activity** screen a dialog, **Start a saturating run?**, names the number of jobs and the endpoint. Confirming submits them.
 - The public endpoint starts one job per request and asks for no confirmation. A program that sends many requests is trusted to have that agreement already; send large sets as `bulk`. See [Examples](../api/examples.md#running-a-flow-on-many-files).
 - On the command line, `python -m doc_engine load` and `python -m doc_engine probe bucket` need `--confirm-saturation`.
-- At most 50 jobs can be submitted in one request.
+- A single **Test run** from the builder is never asked, whatever `server.saturating_jobs` is.
+- At most 50 jobs can be submitted in one request from the screen, or in one `load` command.
 
 The confirmation counts the jobs of one submission. It does not look at what is already queued or running, and jobs submitted one at a time are not counted together.
 

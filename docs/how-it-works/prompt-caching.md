@@ -57,6 +57,9 @@ A warm-up task is created for a step when all of these hold:
 | The static prompt is long enough to be cached on the step's model | `models.<name>.cache_min_tokens` |
 | The step has enough calls for it to pay off | `worker.warmup_min_tasks`, configured default 3 |
 | No other job has warmed the same prompt on the same model recently | `worker.warmup_ttl_s`, configured default 240 seconds |
+| No warm-up of another job for the same prompt and model is already sent, or ahead of this job in the queue | |
+
+In the last case the step's calls wait for the other job's warm-up. See [Sharing a warm-up across jobs](#sharing-a-warm-up-across-jobs).
 
 A step with fewer calls than `worker.warmup_min_tasks`, such as a Reduce step with its single call, gets no warm-up. Its static prompt still carries the cache marker if it is long enough, so its first call writes the entry and a later call could read it.
 
@@ -70,7 +73,14 @@ The engine keeps a record of warm entries, by model and by a fingerprint of the 
 - Each time a call of a step reports that it read from or wrote to the cache, the entry's time is refreshed (at most once every 20 seconds). A prompt that is in steady use stays warm.
 - When a step is planned and its entry is newer than `worker.warmup_ttl_s`, no warm-up is created and the step's calls are `ready` at once.
 
-The entry is recorded when a warm-up *completes*. Jobs that are submitted in the same moment are all planned before any warm-up has finished, so each of them sends its own. Ten jobs submitted together send ten warm-ups for their first step. Their later steps, and any job submitted after the first warm-up has completed, share.
+The entry is recorded when a warm-up *completes*. Jobs that are submitted in the same moment are all planned before any warm-up has finished. They still share one warm-up per model and static prompt. When a step needs a warm-up and its entry is not warm, the planner looks for a warm-up of another job for the same prompt and model:
+
+- If one has already been sent, or sits ahead of this job in the [queue](queue-and-priority.md), the step's calls wait for that one. No second warm-up is created.
+- Otherwise the job sends its own. A job never waits behind work it would otherwise go ahead of: an interactive job does not wait for the unsent warm-up of a bulk job.
+
+Ten jobs submitted together therefore send one warm-up for their first step, not ten. The calls of all ten wait for it and become `ready` when it completes.
+
+If the job that owns the warm-up is cancelled or fails before the warm-up has completed, the waiting calls of the other jobs are released and run without it. The same happens when the warm-up itself fails.
 
 ## The minimum cacheable size
 
@@ -91,7 +101,7 @@ Two settings exist as possible remedies. Both are off by default.
 | `worker.warmup_settle_s` | Waits this many seconds after the warm-up has returned before the step's calls are released |
 | `worker.first_wave_size` | Releases only this many calls when the warm-up completes. The rest are released when the first of them completes. 0 means no limit. |
 
-Both apply only to a step that sent its own warm-up, not to one that found the prompt already warm.
+Both apply only to calls that waited for a warm-up, not to a step that found the prompt already warm.
 
 > **Not yet confirmed:** neither setting has been tried on the real gateway, so it is not known whether either one prevents the first-wave misses. No date is set for this check. To see whether misses occur, compare the cache reads and cache writes of a step's first calls in the job's exported rows.
 
@@ -120,6 +130,6 @@ The record of every call holds its cache reads and cache writes, and the summary
 
 - [Jobs and tasks](jobs-and-tasks.md): where the warm-up task sits among a step's tasks.
 - [Estimates](estimates.md): how the builder's cost figure accounts for caching.
-- [Under heavy load](heavy-load.md): the warm-ups of ten jobs submitted together.
+- [Under heavy load](heavy-load.md): the shared warm-up of ten jobs submitted together.
 - [Steps](../guide/steps.md): writing the prompt and instructions that make up the static prompt.
 - [Settings](../operations/settings.md): the `worker` and `models` settings named on this page.

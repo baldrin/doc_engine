@@ -86,7 +86,7 @@ The **API** button in the flow builder shows these commands for the flow on the 
 | `frontend/` | Frontend source: React, TypeScript, Vite, React Flow |
 | `fake_gateway/` | A stand-in for the gateway, for development and tests |
 | `docs/` | The documentation |
-| `tests/` | Unit tests: `python -m pytest -q` |
+| `tests/` | Unit tests: `python -m pytest -q`. End-to-end check against the fake gateway: `python tests/e2e.py` (needs a reachable Postgres, takes a few minutes, says nothing about the real gateway) |
 
 ## Changing the frontend
 

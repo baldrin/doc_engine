@@ -257,7 +257,8 @@ curl -X POST 'http://localhost:8000/api/v1/files' -F 'file=@price-list.pdf'
 Sending the same content under the same name again returns the id already held; the file is stored once.
 
 Files sent through the endpoint are listed on the [Files screen](../guide/files-screen.md) with an **API**
-tag, and can be removed there. They do not appear in the builder's file pickers.
+tag, and can be removed there. They do not appear in the builder's file pickers, unless someone later uploads
+the same file under the same name from a screen.
 
 **Errors:** `400 invalid_request` (no name), `400 invalid_file`, `413 file_too_large`.
 

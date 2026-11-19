@@ -47,8 +47,9 @@ Other messages you may see:
 - **Only the sample files so far. Files you upload appear here.** below the table, when nothing has been
   uploaded yet.
 
-The list is read when the screen opens and again after each upload or removal. To see a run finish and a
-**Remove** button become available, reload the page.
+The list is read when the screen opens and again after each upload or removal. It also refreshes by itself
+every few seconds, and when the browser window regains focus. A **Remove** button therefore becomes available
+by itself when the run that uses the file ends.
 
 ## The Sample and API tags
 
@@ -60,6 +61,8 @@ The list is read when the screen opens and again after each upload or removal. T
 Files tagged **API** are listed on this screen only. They do not appear in the builder's file lists, in the
 **Test run** dialog or in the **Submit jobs** form on the Activity screen, so the files that callers send do
 not crowd the lists you choose from. You can still see how many runs used such a file, and remove it, here.
+If you upload the same file under the same name from a screen, it loses the **API** tag and appears in those
+lists from then on.
 The public endpoint is described in the [API guide](../api/README.md).
 
 ## Upload files
@@ -73,15 +76,18 @@ For each file a message appears briefly at the bottom of the screen:
 
 - On success: the file's name, **uploaded**, and its size in pages, for example
   **Report.pdf uploaded (12 pages)**. A text file reads **4 pages of text** and an image reads **image**.
+- When Document Engine already holds the same file under the same name: the file's name and
+  **is already here**, for example **Report.pdf is already here (12 pages)**.
 - On failure: the file's name and the reason. The other files in the same upload still go ahead.
 
 Things to know:
 
 - A file may be at most 200 MB. An empty file is refused.
-- Word and other office files are refused with a message asking for a PDF. [File types](file-types.md) lists
-  what is accepted and how each type is divided into pages.
+- Word and other office files are refused with a message asking for a PDF. A zip archive is refused with a
+  message asking for the files inside it, one at a time. [File types](file-types.md) lists what is accepted
+  and how each type is divided into pages.
 - Uploading the same file again under the same name does not make a second copy. Document Engine keeps the one
-  it has, and the message still says **uploaded**.
+  it has, and the message says **is already here** instead of **uploaded**.
 
 > **Tip:** you can also upload without leaving your work. The source block's panel in the builder and the
 > **Test run** dialog both have an **Upload file** button, which takes one file and chooses it for that source
@@ -121,7 +127,8 @@ loaded, the removal is refused with a message naming the file and the number of 
 to remove it when they are done.
 
 To remove such a file, wait for the run to finish, or cancel it from the
-[Run screen](run-screen.md#cancel-a-run), then reload this screen.
+[Run screen](run-screen.md#cancel-a-run) or the [Activity screen](activity-screen.md#cancel-a-job). The
+**Remove** button becomes available within a few seconds.
 
 ### Files that cannot be removed
 

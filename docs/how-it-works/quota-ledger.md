@@ -74,6 +74,8 @@ The input estimate of a task is made when the task is planned: the pages of its 
 
 When a model has a queries-per-hour limit (`models.<name>.qph`), a call is admitted only if the calls admitted in the last hour, plus this one, stay within it. The configured default is 360,000.
 
+The ledger does not count an hour of calls at each admission. It keeps a counter of admitted calls per model and minute, in the table `quota_minutes`, and adds up the counters of the last hour. The counters are whole minutes, so the sum may cover up to one minute more than the hour. The check therefore errs on the safe side.
+
 The three tests are made in that order: output, input, queries. Which one binds depends on the flow. With the configured limits, input is ten times output, so output binds unless calls carry more than ten times as much counted input as they produce output.
 
 ## Admission: one database call
@@ -81,7 +83,7 @@ The three tests are made in that order: output, input, queries. Which one binds 
 A worker's dispatcher asks for work by calling one database function, `de_admit`. Everything below happens inside that one call, in one round trip.
 
 1. Lock the quota rows of the models that have ready tasks.
-2. For each such model, take the head of its queue. See [The queue and priority](queue-and-priority.md).
+2. For each such model, take the head of its queue. See [The queue and priority](queue-and-priority.md). A task that another transaction is changing at that moment, for example because its job is being cancelled, is passed over.
 3. If the model is paused after a 429, answer "held" with the time left.
 4. Drain the output and input levels to the present moment.
 5. Add up the calls in flight for the model.
@@ -128,7 +130,7 @@ The ledger is only as good as its idea of what a call will produce. That idea st
 - **Once a step has three samples**, its calls count at the learned mean output. This is `ledger.learn_estimates`, on by default.
 - The mean is a plain average over the first ten samples and after that a moving average in which each new call weighs one tenth, so a step whose behaviour changes is followed.
 
-The learned duration is used by the `duration` capacity mode, below. The learned output is also what the builder's [estimate](estimates.md) uses.
+The learned duration is used by the `duration` capacity mode, below, and only while `ledger.learn_estimates` is on. The learned output is also what the builder's [estimate](estimates.md) uses.
 
 The ledger counts the mean, not the worst case. A step whose replies vary a great deal will sometimes produce more than was counted; the safety margin absorbs that up to a point. Measured in the proof of concept on Sonnet 5.5, the output of a final summary varied by a factor of 3.7 on identical input, and with thinking set to high the configured expectations were too low (1,400 expected against 1,609 actual for a map step, 6,000 against 10,304 for a reduce step).
 
@@ -141,11 +143,11 @@ The ledger counts the mean, not the worst case. A step whose replies vary a grea
 | Mode | The cap | Status |
 |---|---|---|
 | `fixed` (configured default) | `models.<name>.bucket_capacity_output`, less the safety margin. With the configured defaults: 45,000 x 0.95 = 42,750. | The value 45,000 x 0.95 was validated in the proof of concept on Sonnet 5.5: six scheduler runs, 1,956 calls, no rejections. |
-| `duration` | (`models.<name>.bucket_measured` + refill during half a call), less the safety margin. Half a call is half the step's learned call duration, or half of `ledger.default_call_s` (configured default 9 seconds) until the step has three samples. | Not run on the real gateway. |
+| `duration` | (`models.<name>.bucket_measured` + refill during half a call), less the safety margin. Half a call is half the step's learned call duration, or half of `ledger.default_call_s` (configured default 9 seconds) until the step has three samples. The learned duration is used only when `ledger.learn_estimates` is `true`; otherwise it is always `ledger.default_call_s`. | Not run on the real gateway. |
 
 **Why the cap can be larger than the gateway's bucket.** The gateway's own bucket was measured at about 40,000 tokens, yet 45,000 worked. Calls in flight are not charged now. They are charged when they complete, on average half a call duration from now, and the bucket refills in the meantime. So the ledger can allow the bucket plus about half a call of refill.
 
-**Why there are two modes.** The fixed value was tuned by hand for calls of about 9 seconds. Longer calls, such as calls with thinking, allow more refill before they complete, and shorter calls allow less. The `duration` mode computes the allowance from the step's learned call duration instead of assuming 9 seconds. With the configured defaults and a 9-second call it gives (40,000 + 1,667 x 4.5) x 0.95 = 45,125. In this mode the cap is worked out at each admission from the step of the task at the head of the queue.
+**Why there are two modes.** The fixed value was tuned by hand for calls of about 9 seconds. Longer calls, such as calls with thinking, allow more refill before they complete, and shorter calls allow less. The `duration` mode computes the allowance from the step's learned call duration instead of assuming 9 seconds. With the configured defaults and a 9-second call it gives (40,000 + 1,667 x 4.5) x 0.95 = 45,125. In this mode the cap is worked out at each admission from the step of the task at the head of the queue. The quota panels on the **Activity** screen and `/api/quota` show the cap that admission last used. Before any admission they show the cap for a call of the default length. See [Monitoring](../operations/monitoring.md).
 
 > **Not yet confirmed:** the `duration` mode has not run on the real gateway. The fixed value of 45,000 holds for Sonnet 5.5 with calls of about 9 seconds, and has not been checked for much longer or much shorter calls. No date is set for either check.
 

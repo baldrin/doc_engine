@@ -14,6 +14,7 @@ This page explains every part of the screen, and is for anyone who runs flows or
 - [The Jobs table](#the-jobs-table)
 - [Queue order](#queue-order)
 - [Open a run](#open-a-run)
+- [Cancel a job](#cancel-a-job)
 - [Submit jobs](#submit-jobs)
 - [The confirmation for 4 or more jobs](#the-confirmation-for-4-or-more-jobs)
 
@@ -80,6 +81,7 @@ submitted from this screen, and jobs started by callers of the public endpoint o
 | **In flight** | How many of the job's calls are out at the gateway now. Empty when there are none. |
 | **Rejections** | How many of the job's calls the gateway rejected for exceeding a rate limit. Red when above zero. A rejected call is sent again, so rejections slow a job without failing it. |
 | **Time** | Minutes and seconds from the moment the job was submitted until it ended, or until now if it is still going. Time spent waiting in the queue is included. |
+| The last column | A **Cancel** button on every job that is queued or running. See [Cancel a job](#cancel-a-job). |
 
 When there are no jobs at all, the table reads **No jobs yet. Submit one on the right, or start a test run
 from a flow.**
@@ -109,6 +111,16 @@ Select any row of the Jobs table to open that job's [Run screen](run-screen.md).
 state: a queued or running job is shown live, and a finished one can be replayed there. For a complete job,
 the Run screen leads on to the [Results screen](results-screen.md).
 
+## Cancel a job
+
+Every queued or running job has a **Cancel** button at the end of its row.
+
+1. Select **Cancel** in the job's row.
+2. The browser asks for confirmation: **Cancel "**_job label_**"? Calls already sent will finish and be paid for; their replies are not used.** Confirm to cancel.
+3. A message confirms it: **Job cancelled**.
+
+The effect is the same as **Cancel** on the Run screen; see [Cancel a run](run-screen.md#cancel-a-run).
+
 ## Submit jobs
 
 The **Submit jobs** form at the right starts one or more jobs on a flow, all at the same moment. Use it to run
@@ -133,9 +145,9 @@ More about each:
   run. Changes made in the builder since that version are not run from here; use **Test run** in the builder
   for those.
 - **File.** For a sample flow, the file fields are filled in with its sample files. For your own flows, a
-  field is filled in only when a file has exactly the same name as the source; otherwise it reads
-  **Choose a file**. The file you chose for a source in the builder is not carried over to this form. The list
-  does not
+  field starts from the file you chose for that source in the builder, which this browser remembers. Without
+  one, it takes a file that has exactly the same name as the source; otherwise it reads **Choose a file**. A
+  sample flow whose file you changed in the builder also starts from that choice. The list does not
   include files sent by callers of the public endpoint (see
   [the API tag](files-screen.md#the-sample-and-api-tags)), and there is no upload button in this form: upload
   new files on the [Files screen](files-screen.md) first, then reload this screen.
@@ -197,7 +209,8 @@ for them by itself. The confirmation is there so that a person decides, knowing 
 moment. [Heavy load](../how-it-works/heavy-load.md) describes what happens while the quota is saturated.
 
 The number that triggers the confirmation is 4 unless your administrator changed `server.saturating_jobs`; see
-[Settings](../operations/settings.md).
+[Settings](../operations/settings.md). A single **Test run** from the builder is never asked, whatever that
+number is.
 
 > **Tip:** leave at least a minute between two saturating runs, so that the quota has drained and the
 > scheduler's picture of it is accurate again.

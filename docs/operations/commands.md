@@ -19,6 +19,7 @@ operates Document Engine from a shell.
 - [probe bucket](#probe-bucket)
 - [jobs](#jobs)
 - [export](#export)
+- [The end-to-end check](#the-end-to-end-check)
 
 ## Overview
 
@@ -38,6 +39,15 @@ operates Document Engine from a shell.
 
 Every command reads the settings file first and stops if it is missing or breaks a rule. See
 [Rules enforced at start](settings.md#rules-enforced-at-start).
+
+Document Engine needs Python 3.11 or newer. On an older Python every command stops at once with
+`Document Engine needs Python 3.11 or newer. This is Python <version>.` and exit code 1.
+
+`samples`, `worker`, `load`, `jobs` and `export` need the tables. When they are missing, each prints
+``the database is not set up. Run `python -m doc_engine db init` first.`` and exits with code 1.
+
+One more check is not a command of `python -m doc_engine`: [`python tests/e2e.py`](#the-end-to-end-check)
+runs the whole application against the fake gateway and reports what still works.
 
 ## Options for every command
 
@@ -67,7 +77,7 @@ a `--dry-run` that prints the size and cost and sends nothing.
 | `probe bucket` | Always. | Prints `This saturates the model on purpose and throttles every application using it.` and exits with code 2. |
 
 The same threshold applies on the screens: submitting `server.saturating_jobs` jobs or more from **Activity**
-asks for confirmation. See [Under heavy load](../how-it-works/heavy-load.md).
+asks for confirmation. A single **Test run** from the builder is never asked. See [Under heavy load](../how-it-works/heavy-load.md).
 
 Leave at least a minute between saturating runs. The ledger cannot see what the probe used, nor what other
 applications use, and it starts each process believing the quota is as it last recorded it.
@@ -86,7 +96,7 @@ python -m doc_engine db reset --yes
 | Action | What it does | What it prints |
 |---|---|---|
 | `init` | Applies `sql/001_schema.sql`: creates missing tables, adds new columns, and installs the current functions that admit and complete calls. Then copies each model's limits from the settings into the `quota` table. Keeps all data. | `schema applied; model limits copied from the config:` and one line per model with its gateway name, ITPM, OTPM and output cap (the safety margin already applied). |
-| `check` | Looks for the thirteen tables the application needs. | `all tables present`, or `missing tables: ...` with exit code 1. |
+| `check` | Looks for the fourteen tables the application needs. | `all tables present`, or `missing tables: ...` with exit code 1. |
 | `reset` | Removes every Document Engine table and function. All flows, files, jobs and history are lost. | Without `--yes` it only prints a warning and exits with code 2. With `--yes`: ``all Document Engine tables removed. Run `python -m doc_engine db init` next.`` |
 
 **When to use it.** `init` once at installation and again after every pull. `check` to confirm an
@@ -98,7 +108,9 @@ installation. `reset` only to start again from nothing.
 python -m doc_engine samples [--force]
 ```
 
-Creates the four sample flows and the ten fictional sample files if they are missing. The tables must exist.
+Creates the four sample flows and the ten fictional sample files if they are missing. The tables must exist:
+without them it prints ``the database is not set up. Run `python -m doc_engine db init` first.`` and exits
+with code 1.
 
 | Option | Meaning |
 |---|---|
@@ -108,7 +120,8 @@ It prints `created N flow(s) and M document(s)`, then every flow and every file 
 and for files the page count and size. Use those ids with [`load`](#load).
 
 **When to use it.** After `db init`, or with `--force` after a pull that changed the samples. `serve` installs
-the samples by itself when it finds no flows.
+the samples by itself only on a database that has never held anything: no flows and no files. If every flow
+has been deleted, it does not bring the samples back; run `samples` for that.
 
 ## preflight
 
@@ -180,7 +193,9 @@ Runs the web application: the screens, the API, and a worker inside the same pro
 
 It prints `Document Engine on http://localhost:<port>`. The port is `DATABRICKS_APP_PORT`, else `PORT`, else
 `server.port` (8000). On start it applies the schema, copies the model limits into the `quota` table, and
-installs the samples if there are no flows. Stop it with Ctrl+C: calls in flight are cancelled and their
+installs the samples if the database holds no flows and no files. A model that was taken out of the settings
+is removed from the `quota` table, and so from the quota panels, once none of its calls are waiting or in
+flight. Stop it with Ctrl+C: calls in flight are cancelled and their
 [tasks](../glossary.md#task) return to the queue.
 
 [Monitoring](monitoring.md#log-lines) lists the log lines it prints.
@@ -192,7 +207,8 @@ python -m doc_engine worker
 ```
 
 Runs a worker without the web application. It prints `worker <id> running. Ctrl+C stops it cleanly.` The
-tables must already exist.
+tables must already exist: without them it prints
+``the database is not set up. Run `python -m doc_engine db init` first.`` and exits with code 1.
 
 **When to use it.** When `worker.enabled` is `false` in the web process, or to add a process that makes calls.
 All workers share one quota through Postgres, so an extra worker adds room for calls in flight, not quota.
@@ -211,12 +227,12 @@ see how the scheduler behaves under load.
 | Option | Default | Meaning |
 |---|---|---|
 | `--flow ID` | required | The flow to run, by its id (for example `flow_sample_medical`). The published version is run; if the flow is not published, the latest saved version; if none has been saved, the draft. The first line of output says which. |
-| `--document ID` | required | The file to run it on, by its id. For a flow with [several sources](../guide/several-files.md), repeat it as `--document "Source name=ID"`, once per source. A bare id is used for every source not named. |
-| `--value "Name=value"` | none | A [value input](../guide/value-inputs.md). Repeat for each. An input left out takes its default. |
-| `--jobs N` | `1` | The number of interactive jobs. |
+| `--document ID` | required | The file to run it on, by its id. For a flow with [several sources](../guide/several-files.md), repeat it as `--document "Source name=ID"`, once per source. A bare id is used for every source not named. A `"=ID"` with no name before the `=` sign is refused. |
+| `--value "Name=value"` | none | A [value input](../guide/value-inputs.md). Repeat for each. An input left out takes its default. A value that is not in the form `Name=value` is refused. |
+| `--jobs N` | `1` | The number of interactive jobs. `--jobs` plus `--bulk` must be between 1 and 50, as on the screens. |
 | `--bulk K` | `0` | The number of bulk jobs, submitted after the interactive ones. |
 | `--label TEXT` | `load` | The start of each job's label. Jobs are labelled like `load interactive 1`. |
-| `--dry-run` | off | Print the estimate and stop. Sends nothing. It still needs the database. |
+| `--dry-run` | off | Print the estimate and stop. Sends nothing and changes nothing in the database. It still needs to read the database. |
 | `--confirm-saturation` | off | Needed when `--jobs` plus `--bulk` is `server.saturating_jobs` or more. |
 | `--no-worker` | off | Only submit and wait. A running application or worker does the work. Without this option the command runs its own worker for the length of the run. |
 
@@ -225,12 +241,15 @@ see how the scheduler behaves under load.
 First the plan:
 
 ```text
-flow: <name>   document: <file name> (<pages> pages)
+flow: <name> (<which version runs>)   document: <file name> (<pages> pages)
 values: <name> = <value>, ...          (only when the flow has value inputs)
 jobs: <N> interactive + <K> bulk
 per job: <calls> calls, about <tokens> output tokens, about $<cost>
 total:   <calls> calls, about <tokens> output tokens, about $<cost>
 ```
+
+The estimate is the builder's [estimate](../how-it-works/estimates.md): it uses the share each filter kept in
+the flow's most recent run, and each file's own tokens per page.
 
 Then, unless it is a dry run, `submitted N job(s)` and a progress line every five seconds with the jobs done,
 the calls that succeeded, the rejections and the calls in flight. When every job has finished it prints
@@ -253,15 +272,19 @@ Messages when it cannot start:
 | Message | Cause |
 |---|---|
 | ``the database is not set up. Run `python -m doc_engine db init` first.`` | Tables are missing. |
+| `submit between 1 and 50 jobs at a time (--jobs plus --bulk)` | `--jobs` plus `--bulk` is less than 1 or more than 50, or one of them is negative. |
 | ``flow not found. Run `python -m doc_engine samples` and use the ids it prints.`` | No flow has that id. |
 | `choose a file for <source>` or `the file chosen for <source> was not found` | A source has no file, or the file id is wrong. |
+| `--document "..." has no name before the = sign` | A `--document` was given as `"=ID"`. |
+| `--value "..." is not in the form "Name=value"`, or `--value "..." has no name before the = sign`, then `Give values as --value "Name=value".` | A `--value` is malformed. It is refused, not ignored. |
 | A message naming an input, then `Give values as --value "Name=value".` | A value is missing, of the wrong type, or not declared by the flow. |
+
+Each of these exits with code 1, also in a dry run.
 
 **When to use it.** For the ten-job run of the first session, and whenever you want measured numbers for a
 change to the settings. Always run it with `--dry-run` first.
 
-> **Note:** unlike the screens, which accept at most 50 jobs in one submission, `load` has no upper limit on
-> `--jobs` and `--bulk`.
+> **Note:** like the screens, `load` accepts at most 50 jobs in one submission: `--jobs` plus `--bulk`.
 
 ## probe bucket
 
@@ -329,7 +352,9 @@ settings.
 python -m doc_engine jobs [--limit N]
 ```
 
-Lists the most recent jobs, newest first. `--limit` defaults to 20. One line per job:
+Lists the most recent jobs, newest first. `--limit` defaults to 20. When the tables are missing it prints
+``the database is not set up. Run `python -m doc_engine db init` first.`` and exits with code 1. One line per
+job:
 
 ```text
 <job id>  <state>   <priority>   <wall seconds>s  calls <N>  429s <N>  <flow name> / <file names>
@@ -356,14 +381,51 @@ Writes the rows of one job to CSV files in `DIR`, creating the directory if need
 | `events.csv` | Every state change of the job, in order. |
 | `reservations.csv` | What the ledger counted for each admitted call. |
 
-It prints each file name with its row count, then `written to <DIR>`. A job id that does not exist gives six
-empty files.
+It prints each file name with its row count, then `written to <DIR>`.
+
+A job id that does not exist prints ``job not found: <ID>. `python -m doc_engine jobs` lists recent job ids.``
+and exits with code 1. Nothing is written. When the tables are missing it prints
+``the database is not set up. Run `python -m doc_engine db init` first.`` and exits with code 1.
 
 > **Note:** `tasks.csv` holds the model's outputs, and so whatever they quote from the files. Handle the
 > export as you would the results themselves.
 
 **When to use it.** To keep the evidence of a run, or to analyse one outside the application. See
 [Monitoring](monitoring.md#exporting-a-job).
+
+## The end-to-end check
+
+```text
+python tests/e2e.py [--rounds N] [--speed X] [--quota-scale X] [--keep]
+```
+
+Runs the whole application against the [fake gateway](fake-gateway.md) and checks that it still does what it
+did: the commands, the screens' API, the public endpoint, ten jobs at once, a cancelled job, a killed worker,
+and a gateway that rejects calls. It is not a command of `python -m doc_engine` and is not collected by
+`pytest`; run it directly.
+
+It needs only a reachable Postgres, the one `config.fake.yaml` and the `PG*` variables point at. It starts its
+own fake gateway and its own copy of the application on free ports. It keeps its tables in a separate schema,
+`de_e2e`, of that database, so the tables of a development database are not touched. The schema is removed at
+the end. It takes a few minutes.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--rounds N` | `3` | How many times to run ten jobs at once with a cold prompt cache. |
+| `--speed X` | `25` | How much faster than life the fake gateway answers. |
+| `--quota-scale X` | `5` | Multiplies the model limits, in the settings and in the fake gateway alike, so the runs take less time. |
+| `--keep` | off | Leave the `de_e2e` schema in place afterwards, to look at it. |
+
+It first prints `logs and settings: <directory>`, the temporary directory that holds the settings file it
+wrote and the logs of the processes it started. Then it prints one line per check, `ok` or `FAIL` with the
+reason. The last line is `N of N checks passed`, followed by the failed checks if there are any. The exit
+code is 0 when every check passed and 1 otherwise.
+
+**When to use it.** After a change to the code and after a pull, before trusting the application with a real
+run.
+
+> **Note:** this check says nothing about the real gateway. It shows that the code still runs as before
+> against the fake one.
 
 ## See also
 

@@ -79,13 +79,13 @@ The file you choose here is used for the estimate and for test runs only. When t
    Write notes on the pages you were given.
    ```
 
-5. Leave the other settings as they are: **Model** on Claude Sonnet, **Max output tokens** at 1500, **Output contract** on **Text**, and **Track source pages** switched on.
+5. Leave the other settings as they are: **Output contract** on **Text** and **Cite pages in the text** switched on. On the **Model** tab, **Model** stays on Claude Sonnet and **Max output tokens** at 1500.
 
-**Track source pages** makes the engine add a rule to the prompt that asks the model to cite the page behind each statement, in the form `[p. 12]`. Those page references become links on the [Results screen](results-screen.md). [Steps](steps.md) explains every setting on this panel.
+**Cite pages in the text** makes the engine add a rule to the prompt that asks the model to cite the page behind each statement, in the form `[p. 12]`. Those page references become links on the [Results screen](results-screen.md). [Steps](steps.md) explains every setting on this panel.
 
 Until the step is connected, its block shows a warning and the bar under the canvas reports problems. That is expected at this stage.
 
-> **Screenshot to add:** `images/builder-step-prompt-tab.png`. A step named "Note the pages" selected, with the right-hand panel on the Prompt tab: the System and Instructions blocks filled in, the Model and Max output tokens fields, the Output contract set to Text, and Track source pages switched on.
+> **Screenshot to add:** `images/builder-step-prompt-tab.png`. A step named "Note the pages" selected, with the right-hand panel on the Prompt tab: the System and Instructions blocks filled in, the Output contract set to Text, and Cite pages in the text switched on.
 
 ## Part 4: Connect the source to the step (Map)
 
@@ -181,7 +181,7 @@ To go back to the flow, choose **Flows** in the top bar and open it again. A tes
 
    A message reads **Saved as v1**, and the badge beside the flow name changes from **New · Draft** to **v1 · Saved**.
 
-A version is a numbered copy of the flow as it is now. Saving a version does not make the flow available to callers of the API; that is what **Publish** does. See [Publishing](publishing.md).
+A version is a numbered copy of the flow as it is now. **Save version** checks the flow first, so a flow with problems is not saved as a version. Saving a version does not make the flow available to callers of the API; that is what **Publish** does. See [Publishing](publishing.md).
 
 ## Optional: add a value input
 

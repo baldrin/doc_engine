@@ -37,9 +37,10 @@ The checks run in this order:
 
 1. **PDF**: the file starts with a PDF header.
 2. **Image**: the file starts with the signature of a PNG, JPEG, GIF, TIFF or WebP image. A BMP image is recognised by its signature together with the ending `.bmp`.
-3. **Office file**: the name ends in an office ending (such as `.docx`, `.xlsx`, `.pptx`, `.doc`, `.odt`, `.rtf`), or the content has the signature of an office or zip file. These are [refused](#what-is-refused).
-4. **Damaged image or PDF**: the name ends in an image ending or in `.pdf`, but the content is not one. Refused.
-5. **Other binary content**: refused.
+3. **Office file**: the name ends in an office ending (such as `.docx`, `.xlsx`, `.pptx`, `.doc`, `.odt`, `.rtf`), or the content has the signature of an office file. These are [refused](#what-is-refused).
+4. **Zip archive**: the content has the signature of a zip archive and does not look like an office file. Refused, with its own message.
+5. **Damaged image or PDF**: the name ends in an image ending or in `.pdf`, but the content is not one. Refused.
+6. **Other binary content**: refused.
 6. **Text**: everything else.
 
 So "text" means any file that holds readable characters, whatever its ending. The upload button suggests common endings (`.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.xml`, `.log`, `.yaml`, `.yml`), but the list is only a suggestion.
@@ -111,15 +112,16 @@ A refused upload stores nothing. The message says why.
 |---|---|
 | An empty file | The upload was empty. |
 | Word, Excel, PowerPoint and other office files | *name* **is an office file, which is not supported. Save it as a PDF and upload that.** |
+| A zip archive | *name* **is a zip archive, which is not supported. Upload the files inside it one at a time.** |
 | A file with an image ending that is not a readable image | *name* **could not be read as an image.** |
 | A file ending in `.pdf` that is not a readable PDF, or a damaged PDF | *name* **could not be read as a PDF.** |
 | A PDF with no pages | *name* **has no pages** |
-| Any other binary file, such as a program or an archive | *name* **is not a file type this can read. Send a PDF, an image (PNG, JPEG, GIF, WebP, BMP, TIFF) or a text file.** |
+| Any other binary file, such as a program or an archive that is not a zip | *name* **is not a file type this can read. Send a PDF, an image (PNG, JPEG, GIF, WebP, BMP, TIFF) or a text file.** |
 | A text file over 5 MB | *name* **is larger than 5 MB of text. Split it, or send it as a PDF.** |
 | A text file with nothing but blank space | *name* **holds no text** |
-| A file over 200 MB | The file is larger than 200 MB. |
+| A file over 200 MB | *name* **is larger than 200 MB** |
 
-> **Note:** Zip archives are reported with the office-file message, because modern office files are zip archives and are recognised by that signature.
+> **Note:** Modern office files are zip archives too. Document Engine tells them apart by the names of the parts inside: a zip archive that holds the parts of a Word, Excel, PowerPoint or OpenDocument file gets the office-file message, and any other zip archive gets the zip message.
 
 ## Sending images as PDFs
 

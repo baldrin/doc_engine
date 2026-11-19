@@ -74,7 +74,8 @@ Files that callers of the public endpoint sent are not in these lists. See
 
 **Upload file** takes one file from your computer: a PDF, an image or a text file. While it is sent the button
 reads **Uploading…**. When it is done, a message such as **Report.pdf uploaded (12 pages)** appears, the file
-joins the list, and it is chosen for that source. If the upload is refused, the message gives the reason and
+joins the list, and it is chosen for that source. If Document Engine already holds the same file under the same
+name, the message reads **Report.pdf is already here (12 pages)** and that file is chosen. If the upload is refused, the message gives the reason and
 the field keeps its earlier choice.
 
 The uploaded file also appears on the [Files screen](files-screen.md), where it can be removed later.
@@ -171,7 +172,7 @@ Because the steps after the tested step do not run, the flow's own outputs are n
 ends in one output named after the step, **step name output**, which holds what the step returned: as a table
 when the step returns a schema, as text otherwise. Open it from the Run screen like any other result.
 
-> **Tip:** after a step has run, right-click it and choose **View last outputs** to see what it returned in the
+> **Tip:** after a step has run, choose **View last outputs** on its **Output** tab or in its right-click menu to see what it returned in the
 > latest run without leaving the builder.
 
 ## When something is missing

@@ -51,9 +51,9 @@ From left to right:
 | Sun or moon button | Switches the whole site between light and dark. The choice is remembered in the browser. |
 | **Validate** | Checks the flow now and reports the result. |
 | **Test run** | Runs the whole flow once on the chosen files. |
-| **Save version** | Stores the flow as it is now as the next numbered version. |
+| **Save version** | Checks the flow, then stores it as it is now as the next numbered version. Makes no version when nothing has changed since the latest one. |
 | **API** | Opens the panel that shows how to run the flow from code. |
-| **Publish** | Stores the next version and makes it the one callers run. |
+| **Publish** | Checks the flow, stores the next version and makes it the one callers run. When nothing has changed since the latest version, it publishes that version. |
 
 ### Version badge
 
@@ -74,7 +74,7 @@ The middle of the top bar reads **Estimate for**, followed by the file and three
 - With no source, it reads **no source yet**.
 - Until every source has a file, the figures are replaced by **to see the figures** (one source) or **choose a file for every source to see the figures** (several).
 
-The estimate is worked out from each step's settings, and from real calls once a step has run: after a step has made three real calls, its measured output size replaces the **Expected output tokens per call** setting. A Filter is assumed to keep a quarter of its items until the flow has run once. [Estimates](../how-it-works/estimates.md) explains the calculation.
+The estimate is worked out from each step's settings, and from real calls once a step has run: after a step has made three real calls, its measured output size replaces the **Expected output tokens per call** setting. A Filter is assumed to keep a quarter of its items until the flow has run once. The **calls** figure counts the calls that do the flow's work. Small warm-up calls, which store a long prompt for reuse, are not in that figure; their cost is in the cost figure, and the flow panel shows their number. [Estimates](../how-it-works/estimates.md) explains the calculation.
 
 The estimate is recalculated a moment after anything that changes the flow's meaning. Moving blocks does not change it.
 
@@ -110,7 +110,7 @@ To add a block, drag it onto the canvas, or click it. A dragged block lands wher
 
 | Item | What it adds |
 |---|---|
-| **Blank step** | A step named **New step** with an empty prompt. Model: Claude Sonnet. **Max output tokens**: 1500. Thinking off. Text output. **Track source pages** on. |
+| **Blank step** | A step named **New step** with an empty prompt. Model: Claude Sonnet. **Max output tokens**: 1500. Thinking off. Text output. **Cite pages in the text** on. |
 | **Classify page type** | A ready-made step that classifies a single page. Model: Claude Haiku. **Max output tokens**: 300, expected output 40. The prompt is filled in. Schema output with one field, `page_type`, one of `letter`, `report`, `form`, `table`, `other`. It is meant to be followed by a [Filter](instructions.md#filter). |
 | **Summarize window** | A ready-made step that writes notes on a small group of consecutive pages. Model: Claude Sonnet. **Max output tokens**: 1500, expected output 900. The prompt is filled in. Text output. |
 
@@ -210,9 +210,9 @@ Right-clicking a block selects it and opens a menu headed by the block's name.
 |---|---|---|
 | **Configure** | Double click | Selects the block and shows its settings; for a step, on the **Prompt** tab. |
 | **Rename** | F2 | Puts the cursor in the name field of the right-hand panel, with the name selected. |
-| **Duplicate** | Ctrl D | Adds a copy of the block, named with ` copy` at the end, a little below the original. The copy has the same settings and no connections. |
+| **Duplicate** | ⌘ D on a Mac, Ctrl D elsewhere | Adds a copy of the block, named with ` copy` at the end, a little below the original. The copy has the same settings and no connections. |
 | **Test this step** | T | Steps only. Opens the dialog that runs the flow up to and including this step. See [Steps](steps.md#test-this-step). |
-| **View last outputs** | | Steps only. Shows what this step produced in the latest run. See [Steps](steps.md#view-last-outputs). |
+| **View last outputs** | | Steps only. Shows what this step produced in the latest run. The step's **Output** tab has a button for the same thing. See [Steps](steps.md#view-last-outputs). |
 | **Delete** | Del | Removes the block and every connection to and from it. |
 
 ### Right-click menu of a connection
@@ -225,7 +225,7 @@ Right-clicking a connection opens a menu headed **Connection**.
 | **Use as a reference** | The connection is the input of a step | Turns the connection into a reference. The step then has nothing to work through until another connection is made its input. |
 | **Delete connection** (Del) | Always | Removes the connection. |
 
-A connection that becomes a reference loses its instruction settings. A reference that becomes the input starts as Map with window 1 and overlap 0 when it comes from a source, and as Reduce when it comes from a step. [Several files in one flow](several-files.md) explains inputs and references.
+A connection that becomes a reference keeps its instruction, window, overlap and rule aside, and gets them back when it is made the input again. A reference that has never been the input starts as Map with window 1 and overlap 0 when it comes from a source, and as Reduce when it comes from a step. [Several files in one flow](several-files.md) explains inputs and references.
 
 ### Keyboard shortcuts
 
@@ -261,7 +261,8 @@ The panel is headed **Flow**, with the flow's name and the line **Select a block
 - **Inputs**: the editor for the flow's [value inputs](value-inputs.md). Each input has a name, a **Type** (**Text**, **Number**, **Choice**, **Yes / no**, **JSON**), a **Default** and a description. A choice input also has its list of choices. **Add an input** adds one; the cross beside a name removes it. The note under each input says whether a run must supply it (**No default: every run must supply it.**) or not (**Used when a run does not supply it.**), and warns when it is **Not used by any step yet.**
 - **Estimate by step**: one row per step, with its number of calls and its estimated cost for the chosen files. The heading shows the number of pages the estimate is for. Click a row to select that step.
 - When the flow has a Filter that has not run yet: **A filter's share is assumed to be 25% until the flow has run once.**
-- A reminder of three shortcuts: right-click for more actions, `Del` to remove, `F2` to rename, `Ctrl D` to duplicate.
+- When a run would send warm-up calls, a line under the table, for example: **Plus 2 small warm-up calls that store a long prompt for reuse. Skipped when another run has just done it.** Warm-up calls are not in the calls figure; their cost is included. See [Estimates](../how-it-works/estimates.md#cost).
+- A reminder of three shortcuts: right-click for more actions, `Del` to remove, `F2` to rename, and `⌘ D` on a Mac or `Ctrl D` elsewhere to duplicate.
 
 ### A source selected
 
@@ -284,10 +285,10 @@ The settings are on four tabs. [Steps](steps.md) explains each setting in depth;
 
 | Tab | What is on it |
 |---|---|
-| **Prompt** | **Prompt blocks**: **System** and **Instructions**, with a tag that reads **Cache ready** or **Too short to cache**. The row **Insert a flow input:** with one button per value input, and **Manage inputs** (or **Add one**), which shows the flow panel. A line saying what is inserted from the input: **pages**, **outputs** or both. A line listing the step's references. Then **Model**, **Max output tokens**, **Output contract** (**Text** or **Schema**) and **Track source pages**. |
+| **Prompt** | **Prompt blocks**: **System** and **Instructions**, with a tag that reads **Cache ready** or **Too short to cache**. The row **Insert a flow input:** with one button per value input, and **Manage inputs** (or **Add one**), which shows the flow panel. A line saying what is inserted from the input: **pages**, **outputs** or both. A line listing the step's references. Then **Output contract** (**Text** or **Schema**) and, for a Text output, **Cite pages in the text**. |
 | **Model** | **Model**, **Max output tokens**, **Thinking** (**Off**, **Low**, **Medium**, **High**), **Expected output tokens per call**, and a line with the model's limits per minute and its prices. |
 | **Input** | The block the step works through, the **Instruction** (**Map**, **Reduce**, **Filter**) and its settings, **What each call receives**, the figures for the chosen file, and the step's **References**. See below. |
-| **Output** | **Output contract**, the **Fields** of a schema output with **+ Add field**, and **Track source pages**. |
+| **Output** | **Output contract**, the **Fields** of a schema output with **+ Add field**, **Cite pages in the text** for a Text output, and the **View last outputs** button. |
 
 At the bottom of every tab are **Test this step** and **Done**. **Done** closes the step's settings by selecting nothing.
 
@@ -333,7 +334,7 @@ The bar under the canvas says whether the flow can run.
 - **This flow can run.** followed by a number of warnings means the flow runs, but something deserves a look. Clicking the bar opens the list.
 - Otherwise the bar shows the number of problems and the first message. With one problem, clicking the bar goes straight to it. With several, clicking opens the list over the canvas; click a problem to go to it. Going to a problem selects the block, centres the view on it, and opens the **Input** tab when the problem is on a connection, or the **Prompt** tab otherwise.
 
-Problems stop **Test run** and **Publish**. The list can also hold warnings, shown with a fainter sign; warnings do not stop a run. The two warnings are a step that **goes nowhere** (it is not connected to a step or an output) and a value input that **is not used by any step**.
+Problems stop **Test run**, **Save version** and **Publish**. The list can also hold warnings, shown with a fainter sign; warnings do not stop a run. The two warnings are a step that **goes nowhere** (it is not connected to a step or an output) and a value input that **is not used by any step**.
 
 What the builder checks:
 
@@ -341,7 +342,7 @@ What the builder checks:
 |---|---|
 | The flow | It has at least one source, one step and one output, and no connection loops back to an earlier block. |
 | Sources | Each is connected to a step. When there are several, each has its own name. |
-| Steps | Each has an input, and exactly one connection it works through. It has a prompt (something in **System** or **Instructions**), a configured model and a known thinking setting. No two connections come from the same block. |
+| Steps | Each has an input, and exactly one connection it works through. It has a prompt (something in **System** or **Instructions**), a configured model, **Max output tokens** above zero and a known thinking setting. No two connections come from the same block. |
 | Schema outputs | At least one named field, no two fields with the same name, and allowed values for every `one of` field. |
 | Map | **Window size** is at least 1 and **Overlap** is smaller than the window. |
 | Filter | The earlier step has a schema output; the rule names one of its fields; the rule has a value, unless the comparison is `is true` or `is false`. |

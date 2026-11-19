@@ -88,8 +88,7 @@ Other commands do not create tables:
 |---|---|
 | `db check` | `missing tables: ...` |
 | `preflight` | ``tables missing (...). Run `python -m doc_engine db init`.`` |
-| `load` | ``the database is not set up. Run `python -m doc_engine db init` first.`` |
-| `samples`, `jobs`, `export`, `worker` | A Postgres error saying a relation does not exist. |
+| `load`, `samples`, `jobs`, `export`, `worker` | ``the database is not set up. Run `python -m doc_engine db init` first.`` |
 
 In every case, run `python -m doc_engine db init`.
 
@@ -205,8 +204,9 @@ To see what is waiting and why, use the queries under
 [The tables in Postgres](monitoring.md#the-tables-in-postgres): open jobs, the ledger per model, and what is
 waiting per model.
 
-A job that is **Running** but makes no progress while its calls are `waiting` is waiting for a warm-up call.
-If the warm-up fails, its calls are released and run without the cache.
+A job that is **Running** or **Queued** but makes no progress while its calls are `waiting` is waiting for a
+warm-up call, its own or that of another job with the same prompt. If the warm-up fails, or the job that owns
+it is cancelled or fails, the calls are released and run without the cache.
 
 ## A job failed
 
@@ -228,6 +228,7 @@ discarded. Nothing resumes a failed job: fix the cause and run it again.
 | `Gateway error: APIConnectionError: ...` | The gateway could not be reached, on every attempt. | Check `gateway.base_url` and the network. |
 | `Invalid reply: the reply did not match the output schema: ...` | A step with a schema output got a reply that was not valid for the schema, on every attempt. | Simplify the schema or make the prompt more explicit. A reply cut off at the maximum output is a common cause: raise the step's maximum output. |
 | `Empty reply: the reply held no text (stop_reason ..., blocks [...])` | The model returned no text. With `stop_reason max_tokens`, thinking used the whole maximum output. Not retried. | Raise the step's maximum output, or lower its thinking level. |
+| `this call was returned to the queue N times because the worker sending it stopped each time. It was not sent again.` | The same call lost its worker, or outlived its lease, more than `ledger.max_recoveries_per_call` times (3). The error has the form `<step title>: this call was returned ...`. | Look in the log for why workers stop while they send this call. Then run the job again. |
 | `The model declined this request` | The model stopped with a refusal. Not retried. | Review the step's prompt and the file. The `error` column of the job's row in `calls` holds the category and explanation, when the gateway gave them. |
 | `cancelled by the user` | Someone chose **Cancel**, called the cancel address, or stopped a `load` run with Ctrl+C. The job's state is **Cancelled**, not **Failed**. | Nothing. |
 
@@ -259,8 +260,8 @@ These are answers to a submission, not failures of a job. No job is created.
 
 | Message | Cause |
 |---|---|
-| `submit between 1 and 50 jobs at a time` | More than 50 jobs, or none, in one submission from the screens. |
-| `<N> jobs at once can saturate the endpoint and slow other applications in the workspace. Confirm to start.` | `server.saturating_jobs` jobs or more. The screens ask **Start a saturating run?**; confirm to go on. |
+| `submit between 1 and 50 jobs at a time` | More than 50 jobs, or none, in one submission from the screens. The `load` command refuses the same way for `--jobs` plus `--bulk`. |
+| `<N> jobs at once can saturate the endpoint and slow other applications in the workspace. Confirm to start.` | `server.saturating_jobs` jobs or more. The screens ask **Start a saturating run?**; confirm to go on. A single **Test run** is never asked. |
 | `choose a flow`, `choose a file for <source>`, `the file chosen for <source> was not found` | Something needed was not chosen, or the file has been removed. |
 | `this flow cannot run yet: ...` | The flow has problems; each is listed. One of them is a step that `uses a model that is not configured`, after a model was renamed or removed in the settings. |
 | `<file> has N pages and is attached whole to every call of <step>; the limit is 100 pages. Summarize it in a step first and use that step as the reference.` | A [reference](../glossary.md#reference) to a whole file longer than `worker.max_reference_pages`. |
@@ -273,8 +274,9 @@ The message names the file. The kind of a file is decided from its content first
 | Message | Cause | What to do |
 |---|---|---|
 | `the upload was empty`, `<name> is empty` | The file has no content. | Check the file. |
-| `the file is larger than 200 MB`, `<name> is larger than 200 MB.` | Over the upload limit. | Split the file. |
+| `<name> is larger than 200 MB` | Over the upload limit. The upload stops being read at that size. | Split the file. |
 | `<name> is an office file, which is not supported. Save it as a PDF and upload that.` | A Word, Excel, PowerPoint or similar file. | Save it as a PDF. |
+| `<name> is a zip archive, which is not supported. Upload the files inside it one at a time.` | A zip archive that is not an office file. | Unpack it and upload the files. |
 | `<name> could not be read as a PDF` | The name ends in `.pdf` but the content is not a PDF, or the PDF is damaged. | Open and re-save the file. |
 | `<name> has no pages` | A PDF with no pages. | Check the file. |
 | `<name> could not be read as an image` | The name has an image ending but the content is not a readable image. | Re-export the image. |
@@ -283,7 +285,8 @@ The message names the file. The kind of a file is decided from its content first
 | `<name> is larger than 5 MB of text. Split it, or send it as a PDF.` | A text file over the text limit. | Split it or convert it. |
 | `<name> holds no text` | A text file with only blank lines. | Check the file. |
 
-Uploading the same content under the same name again is not an error: the file already stored is used.
+Uploading the same content under the same name again is not an error: the file already stored is used, and
+the screen says `<name> is already here`.
 
 See [File types](../guide/file-types.md) for what is accepted, and [Limits](limits.md#hard-limits) for the
 numbers.

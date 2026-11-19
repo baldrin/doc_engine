@@ -20,7 +20,7 @@ from .config import ROOT, Section, effective_out_capacity, postgres_conninfo
 log = logging.getLogger("doc_engine.db")
 
 REQUIRED_TABLES = ["flows", "flow_versions", "documents", "jobs", "job_steps", "tasks", "quota",
-                   "reservations", "profiles", "calls", "events", "cache_warm", "workers"]
+                   "reservations", "profiles", "calls", "events", "cache_warm", "workers", "quota_minutes"]
 
 __all__ = ["Db", "Jsonb", "sync_models", "apply_schema", "reset_schema", "missing_tables"]
 

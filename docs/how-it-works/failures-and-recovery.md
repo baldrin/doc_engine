@@ -38,7 +38,7 @@ The gateway client never retries by itself. Every outcome comes back to the work
 | Request too large | No | | The job fails before anything is sent |
 | Call above the model's input limit per minute | No | | The run is refused, or the job fails, before anything is sent |
 | Warm-up fails | As above, by kind | | The step runs without the cache. The job does not fail. |
-| Worker dies or loses its lease | Yes, without limit | No | Another worker makes the call |
+| Worker dies or loses its lease | Yes | No | Another worker makes the call. The job fails once the same call has been returned to the queue more than `ledger.max_recoveries_per_call` times |
 
 The configured default of `worker.max_transient_attempts` is 3. That is three calls in total for one task: the first and two retries. Timeouts, server errors and invalid replies share the one counter.
 
@@ -136,7 +136,9 @@ A related check happens earlier, at submission: a source attached whole to a ste
 
 **What it is.** The [warm-up call](prompt-caching.md) of a step failed.
 
-**What the engine does.** A rejected warm-up returns to the queue, and a warm-up that hits a timeout or server error is retried, as for any call. If it fails for good, the engine releases the step's waiting calls anyway. They run without the cache, at the full input price for the static prompt. The job does not fail.
+**What the engine does.** A rejected warm-up returns to the queue, and a warm-up that hits a timeout or server error is retried, as for any call. If it fails for good, the engine releases the waiting calls anyway. They run without the cache, at the full input price for the static prompt. The job does not fail.
+
+Calls of other jobs may be waiting for the same warm-up, because jobs [share one warm-up](prompt-caching.md#sharing-a-warm-up-across-jobs) per model and static prompt. They are released in the same way. If the job that owns the warm-up is cancelled or fails before the warm-up has completed, the waiting calls of the other jobs run without it.
 
 **What the user sees.** A line in the event feed that the warm-up failed and the step is continuing without the cache.
 
@@ -159,6 +161,8 @@ The reaper treats a running task as abandoned when its lease has run out, when i
 **What the user sees.** A line in the event feed that a lost call was returned to the queue. The job continues after a delay of up to about `ledger.dead_worker_after_s` plus `ledger.reaper_interval_s`.
 
 The lost call is made again. If it had already completed at the gateway, its reply is lost and its tokens were used twice.
+
+**A call that is lost again and again.** Each task counts how often it was returned to the queue because its worker was lost or its lease ran out. When one call has been returned more than `ledger.max_recoveries_per_call` times (configured default 3), it is not sent again, and its job fails. The error names the step and says that the call was returned to the queue that many times because the worker sending it stopped each time. Without this limit, a call that brings down every worker that sends it would go round for ever. Set the limit to 0 to turn it off. A warm-up in that position does not fail its job: it is dropped, and the step's calls run without the cache. A [clean stop](#restart-of-the-whole-app) of a worker returns its calls to the queue but never fails a job this way.
 
 > **Not yet confirmed:** the recovery of a killed worker passes on the fake gateway. It was not tested on the real gateway in the proof of concept and has not run on Databricks Apps. It is to be checked in the first deployment.
 
@@ -185,7 +189,7 @@ Other jobs are not affected. A failed job is not resumed: correct the cause and 
 
 ## A cancelled job
 
-**What it is.** A user cancelled the job, on the **Run** screen or through the API. Stopping `python -m doc_engine load` with Ctrl+C also cancels the jobs it submitted.
+**What it is.** A user cancelled the job, on the **Run** screen, in the **Jobs** table of the **Activity** screen, or through the API. Stopping `python -m doc_engine load` with Ctrl+C also cancels the jobs it submitted.
 
 **What the engine does.** The same as for a failed job, with the state `cancelled`: tasks not yet sent are cancelled and unfinished steps are marked cancelled. Calls in flight are not interrupted. They finish, are recorded, count in the ledger and in the cost, and their results are discarded.
 
@@ -195,7 +199,7 @@ Other jobs are not affected. A failed job is not resumed: correct the cause and 
 
 Everything the engine needs is in Postgres, so a restart loses no job.
 
-**A clean stop.** When the process is asked to stop, the worker cancels its calls in flight and returns their tasks to the queue at once, without using an attempt. Their expected output is kept in the ledger's level, since the gateway may still charge for them. The worker then removes itself from the `workers` table.
+**A clean stop.** When the process is asked to stop, the worker cancels its calls in flight and returns their tasks to the queue at once, without using an attempt. Their expected output is kept in the ledger's level, since the gateway may still charge for them. The worker then removes itself from the `workers` table. A clean stop never fails a job for a call that was [returned too often](#a-worker-that-dies).
 
 **A hard stop.** When the process is killed, its tasks stay marked as running. They are recovered as described under [A worker that dies](#a-worker-that-dies), by another process or by the restarted one, after about `ledger.dead_worker_after_s`.
 

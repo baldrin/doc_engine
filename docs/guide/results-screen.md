@@ -40,7 +40,7 @@ had finished are shown.
 | The trail above the title | **Activity** (a link to the [Activity screen](activity-screen.md)), then the job's label, such as **Test run** (a link to its [Run screen](run-screen.md)), then **Results**. |
 | The title | The name of the file the job read. For a job on several files, the names of the flow's inputs, such as **Purchase order, Delivery note, Invoice**; hover to read the file names. |
 | The tag beside the title | The flow's name and the version the job was started from, for example **Medical record summary · v1**. |
-| **Back to the run** | Goes back one step in the browser's history, which is the Run screen when you came from there. |
+| **Back to the run** | Opens the [Run screen](run-screen.md) of this job, wherever you came from. |
 
 ## Ran with: the values of the run
 
@@ -208,7 +208,11 @@ references. To get the whole text, open the step in the [builder](builder.md), r
 [Steps](steps.md)), and run the flow again. The same event is reported on the Run screen while the job runs,
 as a **cut off at max output** line in the [Live events](run-screen.md#live-events) feed.
 
-The notice is shown in the text form only. Rows in a table output carry no such mark.
+A table output has its own notice, above the table, when a reply behind it was cut off:
+
+**At least one reply behind this table was cut off at the step's max output tokens, so rows may be missing. Raise it and run again.**
+
+The rows themselves carry no mark.
 
 ## Download an output
 
@@ -217,7 +221,7 @@ ones appear depends on what the output holds.
 
 | Button | Shown when | What you get |
 |---|---|---|
-| **CSV** | The output has table data. | A file named after the output, ending in `.csv`. The first line holds the column names as the step's schema spells them, **page** first. Every value is in double quotes. With several sources, the page value includes the input's name. |
+| **CSV** | The output is shown in table form. | A file named after the output, ending in `.csv`. The first line holds the column names as the step's schema spells them, **page** first. Every value is in double quotes. With several sources, the page value includes the input's name. |
 | **Text** | At least one item of the output has text. | A file named after the output, ending in `.md`. It holds the text of every item, one after another with a blank line between, exactly as the model wrote it, so page references appear in their bracketed form. |
 
 Each button saves one output. For a flow with several outputs, open each tab and download it in turn.

@@ -22,20 +22,20 @@ gateway. For operators, and for anyone deciding whether Document Engine is ready
 
 | Limit | Value | Set by | What happens beyond it |
 |---|---|---|---|
-| Size of an uploaded file | 200 MB | Fixed in the code | The upload is refused: `the file is larger than 200 MB`. On the public endpoint the reply is HTTP 413 with the code `file_too_large`. |
+| Size of an uploaded file | 200 MB | Fixed in the code | The upload is refused: `<name> is larger than 200 MB`. The upload stops being read at that size, so an oversized file is never held in memory whole. On the public endpoint the reply is HTTP 413 with the code `file_too_large`. |
 | Size of a text file | 5 MB | Fixed in the code | Refused: `<name> is larger than 5 MB of text. Split it, or send it as a PDF.` |
 | Page size of a text file | About 3,000 characters, never under 200 | `documents.text_page_chars` | A longer file gets more pages. A single line longer than a page is split across pages. |
 | Size of an image | Scaled down to 1,568 pixels on its long edge | `documents.image_max_px` | The image is scaled when uploaded, and stored as PNG or JPEG. The code aims to keep the stored image under 3.5 MB. |
 | Frames of an animated GIF or multi-page TIFF | The first only | Fixed in the code | The other frames are ignored. |
-| File kinds | PDF, image (PNG, JPEG, GIF, WebP, BMP, TIFF), text | Fixed in the code | Office files and unknown binary files are refused. |
+| File kinds | PDF, image (PNG, JPEG, GIF, WebP, BMP, TIFF), text | Fixed in the code | Office files, zip archives and unknown binary files are refused. |
 | Files per source | One | Not built | See [What is not built](#what-is-not-built). |
 
 ### Runs
 
 | Limit | Value | Set by | What happens beyond it |
 |---|---|---|---|
-| Jobs in one submission from the screens or `POST /api/jobs` | 1 to 50 | Fixed in the code | Refused: `submit between 1 and 50 jobs at a time`. |
-| Jobs in one submission before confirmation is needed | 4 | `server.saturating_jobs` | The screens ask for confirmation; `load` needs `--confirm-saturation`. |
+| Jobs in one submission from the screens, `POST /api/jobs` or the `load` command | 1 to 50 | Fixed in the code | Refused: `submit between 1 and 50 jobs at a time`. |
+| Jobs in one submission before confirmation is needed | 4 | `server.saturating_jobs` | The screens ask for confirmation; `load` needs `--confirm-saturation`. A single **Test run** is never asked. |
 | Jobs per request on the public endpoint | One | Fixed in the code | Each request starts one job. There is no confirmation and no limit on the number of requests. |
 | Pages of a file attached whole to a step as a [reference](../glossary.md#reference) | 100 | `worker.max_reference_pages` | The run is refused before a job is created. |
 | Length of a text or JSON [value input](../guide/value-inputs.md) | 20,000 characters | `worker.max_value_chars` | The run is refused: `Input "<name>" is longer than 20,000 characters. Send long content as a file.` |
@@ -53,6 +53,7 @@ gateway. For operators, and for anyone deciding whether Document Engine is ready
 | HTTP connections to the gateway per process | 512 | `gateway.max_connections` | Must exceed `worker.concurrency`. |
 | Database connections per process | 16 | `postgres.pool_size` | Further database work waits for a free connection. |
 | Time an admitted call may hold its place | 900 seconds | `ledger.lease_s` | The call is treated as lost and returned to the queue. |
+| Times one call may be returned to the queue after a lost worker or lease | 3 | `ledger.max_recoveries_per_call` | The call is not sent again and its job fails. `0` means no limit. |
 | Input tokens, output tokens and queries per model | 1,000,000 per minute, 100,000 per minute, 360,000 per hour (Haiku: 200,000 and 20,000 per minute) | `models.<name>.itpm`, `otpm`, `qph` | The ledger holds calls back to stay under them. |
 
 The 16 MB guard and the 100-page reference limit are separate. A whole-file reference within 100 pages can

@@ -50,8 +50,8 @@ The input of one call is the sum of:
 
 | Part | How it is estimated |
 |---|---|
-| The static prompt | The characters of the step's system prompt and instructions, divided by 3.6, plus an allowance of 150 tokens |
-| Pages | The pages in one call, times the tokens per page of the file. A Map call holds one window of pages, a Filter call one page, and a Reduce step that reads pages directly holds all of them. |
+| The static prompt | The characters of the static prompt as it is sent, divided by 3.6, plus an allowance of 150 tokens. That is the step's system prompt and instructions, and the output contract (for a Schema output) or the rule for citing pages (for a Text output with **Cite pages in the text** on). |
+| Pages | The pages in one call, times the tokens per page of the file. A Map call holds one window of pages, a Filter call the pages of one item of the step before it, and a Reduce step that reads pages directly holds all of them. |
 | Earlier outputs | The items in one call, times the output per call of the step they come from |
 | References | A source used as a reference: all its pages, times its tokens per page. A step used as a reference: all its outputs, times its output per call. |
 
@@ -79,7 +79,9 @@ The cost of a step is its tokens times the prices configured for its model under
 - **Input without caching**: every call pays the input price for the static prompt and for everything else.
 - **Input with caching**: the static prompt is paid once at the cache-write price and on every further call at the cache-read price. Pages, earlier outputs and references are paid at the input price on every call.
 
-The estimate assumes caching when the static prompt reaches the model's `cache_min_tokens` and the step has at least two calls.
+The estimate assumes caching by the planner's own rule: the static prompt is marked for caching when its estimated size reaches three quarters of the model's `cache_min_tokens` (see [Prompt caching](prompt-caching.md#the-minimum-cacheable-size)), and the step has at least two calls.
+
+**Warm-up calls.** A cached step with at least `worker.warmup_min_tasks` calls (configured default 3) gets a [warm-up call](prompt-caching.md#the-warm-up-call), unless `worker.cache_warmup` is off. The warm-up writes the static prompt to the cache, so every call of the step then reads it. The step's cost includes that: one cache write, and a cache read on every call. Without a warm-up, the first call writes the prompt and the others read it. Warm-ups are not added to the calls figure. The builder shows them apart, in a line under the per-step table: "Plus N small warm-up call(s) that store a long prompt for reuse. Skipped when another run has just done it."
 
 The prices are configuration, not something the engine reads from the gateway. If the prices of the endpoint change, change them in the [settings](../operations/settings.md). Haiku is configured at its short-context rate.
 
@@ -102,14 +104,13 @@ The same learned mean is what the [quota ledger](quota-ledger.md#learned-expecte
 
 ## What the estimate leaves out
 
-- **Warm-up calls.** They are not in the call count. Their cost is close to what the estimate already includes, because it counts one cache write for the static prompt.
+- **A shared warm-up.** The estimate counts a warm-up for every step that would send one. A run that finds the prompt already warm, or shares another job's warm-up, sends none. See [Cost](#cost).
 - **Retries and rejected calls.** A reply that fails the output schema and is retried is paid for twice.
-- **The output contract and the citation rule.** The schema or the rule for citing pages is part of the static prompt that is sent, but not of the characters the estimate counts.
 - **First-wave cache misses.** See [Prompt caching](prompt-caching.md#optional-first-wave-settings).
 - **Thinking**, until it is learned. Thinking tokens are output tokens. A step with thinking on produces more than its visible reply, and the setting has to allow for that.
 - **Time.** The estimate gives tokens and cost, not duration. For the time a batch takes, see [Under heavy load](heavy-load.md#what-scales-and-what-is-the-ceiling).
 
-The command `python -m doc_engine load --dry-run` prints the same calculation for one job and for the number of jobs asked for, and sends nothing. It is a little rougher than the builder's figure: it assumes 25% for every filter, and uses the PDF figure for every page whatever the file type.
+The command `python -m doc_engine load --dry-run` prints the same calculation for one job and for the number of jobs asked for, and sends nothing. Like the builder, it uses the share each filter kept in the most recent run, and each file's own tokens per page.
 
 ## How far to trust it
 

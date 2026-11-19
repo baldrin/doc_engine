@@ -22,7 +22,7 @@ A flow exists in up to three forms at once.
 | Form | What it is | How it is made | Who uses it |
 |---|---|---|---|
 | **Draft** | The flow as it is on the canvas. | Saved by the builder by itself, after every change. | The builder, the estimate, and test runs. |
-| **Version** | A numbered copy of the flow, taken at one moment: v1, v2, v3. | **Save version**, or **Publish**. | A record of the flow at that moment. |
+| **Version** | A numbered copy of the flow, taken at one moment: v1, v2, v3. | **Save version**, or **Publish**, when the flow has changed since the latest version. | A record of the flow at that moment. |
 | **Published version** | The one version that callers run. | **Publish**. | Callers of the [API](../api/README.md). |
 
 A flow has at most one published version. The badge beside the flow's name in the [builder](builder.md#version-badge) shows where things stand:
@@ -43,8 +43,8 @@ On the [Flows screen](flows-screen.md), a flow that has a published version is m
 **Save version**, in the builder's top bar, stores the flow as it is now as the next numbered version, and confirms with **Saved as v4**.
 
 - It does not change what callers run.
-- It does not check the flow. A flow with problems can be saved as a version.
-- Each use makes a new version number, whether or not anything changed.
+- It checks the flow first. A flow with problems is not saved as a version: the message reads **Fix the problems before saving a version.** and the problem list opens over the canvas.
+- When nothing has changed since the latest version, it makes no new version and says so: **Nothing has changed since v4. No new version was saved.** Moving a block does not count as a change.
 
 Use it to mark a state you may want to refer to: before a large change, or after a test run that went well. A test run records the number of the latest version at the time it was started; the flow it actually runs is the draft on the canvas.
 
@@ -54,11 +54,11 @@ Use it to mark a state you may want to refer to: before a large change, or after
 
 1. It checks the flow. If there are problems, nothing is published: the message reads **Fix the problems before publishing.** and the problem list opens over the canvas.
 2. It checks the flow's name against the [name rule](#the-name-rule).
-3. It stores the flow as it is now as the next numbered version, makes that version the published one, and confirms with **Published as v4**.
+3. It stores the flow as it is now as the next numbered version, makes that version the published one, and confirms with **Published as v4**. When nothing has changed since the latest version, it makes no new version: it publishes the latest version, or, if that one is already published, says **v4 is already published. Nothing has changed since.**
 
 The badge turns green and reads **v4 · Published**.
 
-You do not need to choose **Save version** first. **Publish** always publishes the flow as it is on the canvas at that moment, as a new version.
+You do not need to choose **Save version** first. **Publish** always publishes the flow as it is on the canvas at that moment: as a new version when the flow has changed since the latest one, and as the latest version otherwise.
 
 > **Screenshot to add:** `images/builder-published-badge.png`. The builder's top bar just after publishing: the flow name with the green badge "v4 · Published", and the buttons Validate, Test run, Save version, API and Publish.
 
@@ -104,7 +104,7 @@ This means you can work on a published flow safely:
 1. Edit the flow. The badge changes to **v4 · Draft**. Callers still run version 4.
 2. Test the changes with **Test run**, which uses the draft.
 3. Optionally choose **Save version**. The badge reads **v5 · Saved**. Callers still run version 4.
-4. When the changes are ready, choose **Publish**. The flow becomes version 6 and callers run it from then on.
+4. When the changes are ready, choose **Publish**. If nothing has changed since version 5 was saved, version 5 becomes the published one. Otherwise the flow as it is now becomes version 6. Callers run the published version from then on.
 
 Jobs that are already running are not affected by publishing: each job works from its own copy of the flow, taken when it was submitted.
 
@@ -171,7 +171,7 @@ After that:
 - The flow, its draft and all its versions are kept. Only the mark saying which version is published is removed. The badge returns to **Saved**.
 - The flow's name is free for another flow to publish under.
 
-To make the flow available again, choose **Publish**. That publishes the flow as it is on the canvas now, as a new version; there is no action that re-publishes an earlier version.
+To make the flow available again, choose **Publish**. That publishes the flow as it is on the canvas now: the latest version when nothing has changed since it was made, otherwise a new version. There is no action that re-publishes an older version.
 
 ## See also
 

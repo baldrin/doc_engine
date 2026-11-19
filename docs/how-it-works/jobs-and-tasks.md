@@ -94,7 +94,7 @@ A step waits for its references: its tasks are created only when its input and e
 
 When a step's static prompt is long enough to be cached and the step has at least `worker.warmup_min_tasks` calls (configured default 3), the planner creates one extra task before the step's calls: the warm-up. It sends the static prompt with a one-word message so that the prompt is written to the model's cache.
 
-The step's calls are created in state `waiting` and become `ready` when the warm-up finishes. If another job warmed the same prompt on the same model recently, no warm-up is created and the calls are `ready` at once. If the warm-up fails, the calls are released anyway and run without the cache.
+The step's calls are created in state `waiting` and become `ready` when the warm-up finishes. If another job warmed the same prompt on the same model recently, no warm-up is created and the calls are `ready` at once. If another job's warm-up for the same prompt is already sent, or sits ahead of this job in the queue, no second warm-up is created and the calls wait for that one. If the warm-up fails, or the job that owns it is cancelled or fails, the calls are released anyway and run without the cache.
 
 A warm-up is a task like any other: it waits in the same queue, is admitted by the same ledger, and has a row in `calls`. It is not counted in a step's progress. [Prompt caching](prompt-caching.md) has the details.
 
@@ -107,7 +107,7 @@ A warm-up is a task like any other: it waits in the same queue, is admitted by t
 | `queued` | Submitted. No call has been admitted yet. |
 | `running` | At least one call has been admitted. |
 | `done` | Every step and output is done. |
-| `failed` | A call failed in a way that cannot be retried, or ran out of attempts. The job's error names the step and the cause. |
+| `failed` | A call failed in a way that cannot be retried, ran out of attempts, or was returned to the queue too often after lost workers. The job's error names the step and the cause. |
 | `cancelled` | A user cancelled the job. |
 
 ### Step
@@ -126,9 +126,10 @@ Sources and outputs have rows too. A source is done from the start. An output is
 
 | State | Meaning |
 |---|---|
-| `waiting` | Created, but held back until its warm-up finishes. Not in the queue. |
+| `waiting` | Created, but held back until the warm-up it waits for finishes. Not in the queue. |
 | `ready` | In the queue. |
 | `running` | Admitted by the ledger. A worker holds a lease on it and the call is in flight. |
+| `lost` | Returned to the queue more than `ledger.max_recoveries_per_call` times after a lost worker or lease. Not sent again. A worker then marks it failed and fails its job. |
 | `done` | The call succeeded and its output is stored. |
 | `failed` | The call failed for good. |
 | `cancelled` | The job failed or was cancelled before this task finished. |

@@ -21,7 +21,7 @@ results, the queue and the [quota ledger](../how-it-works/quota-ledger.md).
 
 | Need | Detail |
 |---|---|
-| Python | The repository does not declare a version. It is developed on Python 3.12, and the current releases of two of its packages (FastAPI and Pillow) need 3.11 or newer. |
+| Python | 3.11 or newer. An older Python is refused at start: `Document Engine needs Python 3.11 or newer. This is Python <version>.` It is developed on Python 3.12. |
 | Python packages | Those in `requirements.txt`: `anthropic`, `psycopg[binary]`, `pypdf`, `pyyaml`, `fastapi`, `uvicorn`, `jsonschema`, `pillow`, `python-multipart`. |
 | Postgres | One database the application may create tables and functions in. Locally any Postgres; on Databricks, Lakebase. |
 | A gateway endpoint | The workspace's Anthropic-style endpoint on the Databricks AI Gateway, set as `gateway.base_url` or `DOC_ENGINE_GATEWAY_URL`. |
@@ -42,7 +42,7 @@ python -m doc_engine serve
 
 This starts the web server and, inside the same process, a worker. It prints the address it listens on, by
 default `http://localhost:8000`. On each start it creates any missing tables, copies the model limits from the
-settings into the database, and installs the sample flows and files if there are no flows yet.
+settings into the database, and installs the sample flows and files if the database has never held anything.
 
 Before the first start against a real gateway, run the cheap check:
 

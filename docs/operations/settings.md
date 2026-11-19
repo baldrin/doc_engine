@@ -62,7 +62,7 @@ One entry per model. The key (`haiku`, `sonnet`, `opus`) is the name [steps](../
 | `gateway_name` | for example `system.ai.claude-sonnet-5-5` | The model name sent to the gateway. | When the workspace serves the model under another name. |
 | `itpm` | `1000000` (`200000` for Haiku) | The endpoint's input tokens per minute for this model. | When the endpoint tier changes. |
 | `otpm` | `100000` (`20000` for Haiku) | The endpoint's output tokens per minute for this model. The ledger drains at this rate. | When the endpoint tier changes. Then [re-size the model](#re-sizing-a-model). |
-| `qph` | `360000` | Queries per hour. The ledger stops admitting when the last hour's admissions reach it. `0` or absent turns the check off. | When the endpoint tier changes. |
+| `qph` | `360000` | Queries per hour. The ledger stops admitting when the last hour's admissions reach it. It counts whole minutes, so it may count up to one minute more than the hour, which errs on the safe side. `0` or absent turns the check off. | When the endpoint tier changes. |
 | `bucket_capacity_output` | `45000` (`8000` for Haiku) | The output cap in `fixed` capacity mode, before the safety margin. | Only from a reviewed bucket probe result. |
 | `bucket_measured` | `40000` (`8000` for Haiku) | The gateway's own output bucket, used in `duration` capacity mode. Falls back to `bucket_capacity_output`, then `otpm`. | After a bucket probe: the probe prints the value to set. |
 | `thinking_off` | per model | How "thinking off" is sent to this model: `disabled`, `between_tools` or `effort_low`. | When preflight says the model refuses its form; preflight prints the line to set. |
@@ -89,13 +89,14 @@ How the [quota ledger](../how-it-works/quota-ledger.md) decides what may be sent
 | Setting | Default | Meaning | When to change it |
 |---|---|---|---|
 | `safety_margin_fraction` | `0.05` | The share of each cap left unused. | Raise it if rejections appear in normal running. |
-| `capacity_mode` | `fixed` | How the output cap is worked out. `fixed`: `bucket_capacity_output` × (1 − margin). `duration`: (`bucket_measured` + refill during half a call) × (1 − margin), using the learned call length, so it adapts to short and long calls. | `duration` when call lengths are far from the 9 seconds `fixed` was validated with. |
-| `default_call_s` | `9` | In `duration` mode, the call length assumed until a step has three recorded calls. | When typical calls are much shorter or longer. |
+| `capacity_mode` | `fixed` | How the output cap is worked out. `fixed`: `bucket_capacity_output` × (1 − margin). `duration`: (`bucket_measured` + refill during half a call) × (1 − margin), using the learned call length when `learn_estimates` is `true`, so it adapts to short and long calls. With `learn_estimates: false` it always uses `default_call_s`. The quota panels and `/api/quota` show the cap that admission last used. | `duration` when call lengths are far from the 9 seconds `fixed` was validated with. |
+| `default_call_s` | `9` | In `duration` mode, the call length assumed until a step has three recorded calls, and always when `learn_estimates` is `false`. | When typical calls are much shorter or longer. |
 | `hold_on_429_s` | `1` | The first pause after a rejection: admission for that model stops this many seconds, for every worker. | Rarely. |
 | `hold_on_429_max_s` | `15` | The longest pause. Each further round of rejections doubles the pause up to this; an accepted call puts it back to `hold_on_429_s`. Set it equal to `hold_on_429_s` for a fixed pause. | Raise it if the gateway rejects for longer than this after an overrun. |
-| `learn_estimates` | `true` | Count each call in flight at the learned mean output of its step once the step has three recorded calls. When `false`, the step's configured expectation is always used. | Set `false` only to diagnose estimates. |
+| `learn_estimates` | `true` | Count each call in flight at the learned mean output of its step once the step has three recorded calls. When `false`, the step's configured expectation is always used, and `duration` mode always uses `default_call_s` as the call length. | Set `false` only to diagnose estimates. |
 | `lease_s` | `900` | How long an admitted call may run before it is treated as lost and returned to the queue. | Must exceed `gateway.request_timeout_s`. |
 | `dead_worker_after_s` | `30` | A worker that has not reported for this long is treated as gone, and its calls return to the queue. | Lower for faster recovery; not below a few heartbeats (workers report every 5 seconds). |
+| `max_recoveries_per_call` | `3` | How often one call may be returned to the queue because its worker was lost or its lease ran out. A call returned more often than this is not sent again, and its job fails with a message that says so. A warm-up in that position is dropped, and the step's calls run without it. A clean stop of a worker returns its calls but never fails a job this way. `0` means no limit. See [Failures and recovery](../how-it-works/failures-and-recovery.md#a-worker-that-dies). | Rarely. |
 | `reaper_interval_s` | `5` | How often each worker looks for lost calls. | Rarely. |
 
 > **Not yet confirmed:** `duration` mode has not run on the real gateway. It is the mode `config.fake.yaml`
@@ -112,7 +113,7 @@ The workers that make the model calls.
 | `max_transient_attempts` | `3` | How many times a call is tried when it times out, gets a server error, or returns a reply that does not match its schema. A rejection (429) never counts. | Raise for an unreliable endpoint. |
 | `retry_delays_s` | `[2, 10, 30]` | Seconds to wait before the second, third and later attempts after a timeout or server error. The last value repeats. A reply that does not match its schema is retried at once. | Lengthen to ride out longer gateway outages. |
 | `max_rejections_per_call` | `50` | A call rejected (429) this many times in a row fails, and its job fails. `0` means no limit. | Raise if other applications share the quota and long waits are acceptable. |
-| `cache_warmup` | `true` | Send one small call per model and static prompt to write the prompt cache; the step's calls wait for it. See [Prompt caching](../how-it-works/prompt-caching.md). | Set `false` to stop warm-ups. |
+| `cache_warmup` | `true` | Send one small call per model and static prompt to write the prompt cache; the step's calls wait for it. Jobs submitted together share that one call. See [Prompt caching](../how-it-works/prompt-caching.md). | Set `false` to stop warm-ups. |
 | `warmup_max_tokens` | `1` | `max_tokens` of the warm-up call. | Rarely. |
 | `warmup_min_tasks` | `3` | Steps with fewer calls than this get no warm-up. | Rarely. |
 | `max_reference_pages` | `100` | The largest file that may be attached whole to a step as a [reference](../glossary.md#reference). A run that would exceed it is refused. | With care: a whole-file reference is sent, and paid for, on every call of the step. |

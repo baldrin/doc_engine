@@ -82,13 +82,14 @@ Nothing the engine needs is held only in process memory. A process can stop at a
 | `tasks` | One row per model call to make. The rows in state `ready` are the queue. |
 | `quota` | One row per model: its limits and the ledger's current level. This row is the single authority on what may be sent. |
 | `reservations` | One row per admitted call: what the ledger counts for it while it is in flight |
+| `quota_minutes` | Calls admitted per model and minute, which the queries-per-hour check adds up |
 | `profiles` | What the calls of each step really produced: learned output, input and duration |
 | `calls` | One row per model call made, successful or not |
 | `events` | One row per state change. The live screens and the replay of a finished run read this table. |
 | `cache_warm` | Which static prompts have a warm cache entry, so jobs can share a warm-up |
 | `workers` | The worker processes that are alive, with their last heartbeat |
 
-Two database functions do the scheduling. `de_admit` picks the next task and admits it if it fits; `de_release` records a completed call in the ledger. A third, `de_reap`, returns the calls of a lost worker to the queue. Because the decision is made inside the database, with the model's quota row locked, it does not matter which process asks.
+Two database functions do the scheduling. `de_admit` picks the next task and admits it if it fits; `de_release` records a completed call in the ledger. A third, `de_reap`, returns the calls of a lost worker to the queue, and sets aside a call that has been returned too often. Because the decision is made inside the database, with the model's quota row locked, it does not matter which process asks.
 
 ## The gateway client
 

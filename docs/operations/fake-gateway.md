@@ -182,8 +182,19 @@ They cover, among other things, how pages are grouped into windows, flow validat
 handling, estimates, the form of each request, how a rejection's message is read, value inputs, file kinds and
 the public endpoint's naming rules.
 
-Everything that involves the database, the workers and the scheduler together is exercised by running the
-application against the fake gateway, as above.
+Everything that involves the database, the workers and the scheduler together is exercised by the end-to-end
+check:
+
+```bash
+python tests/e2e.py
+```
+
+It is not collected by `pytest`. It needs only a reachable Postgres. It starts its own fake gateway and its own
+copy of the application on free ports, keeps its tables in a separate schema (`de_e2e`) of the configured
+database, and takes a few minutes. It prints a list of checks and ends with `N of N checks passed`. Its
+options are `--rounds`, `--speed`, `--quota-scale` and `--keep`; see
+[Commands](commands.md#the-end-to-end-check). Like everything on this page, it says nothing about the real
+gateway.
 
 ## What it cannot tell you
 
