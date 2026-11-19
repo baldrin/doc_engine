@@ -30,10 +30,14 @@ Address: `http://localhost:8100`
 | 4 | **Builder** | Point at the estimate in the header. | "Calls, tokens and cost, before anything is run." |
 | 5 | **Test run** | Choose **Test run** and start it. | "Every call is a task in one queue. The gauges are the shared quota: the scheduler only sends a call when it fits, so the gateway never has to reject one." |
 | 6 | **Results** | Open the results. Click a page reference. | "Every finding links back to the page it came from." (Text is filler today.) |
-| 7 | **Activity** | Submit about 10 jobs, some interactive and some bulk. Confirm when asked. | "Ten jobs at once, one quota, interactive goes first, rejections stay at zero. Separate applications cannot do this, because none of them can see the others." |
-| 8 | **Builder** | Open **Check an invoice against its order**, choose **API**. | "Publish a flow and any program can run it: send the flow name and the files, get a job id, poll for the result. That is the whole integration." |
+| 7 | **Builder** | Go back to the flow you just ran. Click **Summarize window**, open the **Model** tab, and point at **Learned so far: about N tokens** under Expected output tokens per call. | "It measures what each step really produces and plans with that, not with the configured guess. After three calls of a step, the scheduler and the cost estimate both use the measured figure." |
+| 8 | **Activity** | Submit about 10 jobs, some interactive and some bulk. Confirm when asked. | "Ten jobs at once, one quota, interactive goes first, rejections stay at zero. Separate applications cannot do this, because none of them can see the others." |
+| 9 | **Builder** | Open **Check an invoice against its order**, choose **API**. | "Publish a flow and any program can run it: send the flow name and the files, get a job id, poll for the result. That is the whole integration." |
 
-If time is short, do 1, 2, 5 and 7.
+If time is short, do 1, 2, 5 and 8.
+
+Step 7 only shows a figure after the flow has run at least once on this machine, with a file chosen for its
+source. Run it once before the meeting so the figure is there.
 
 Optional, 1 minute: on **Flows**, choose **Duplicate** on a sample, rename it, change one prompt. "That is a new
 process."
@@ -47,6 +51,8 @@ process."
 - **Value inputs:** a flow can take settings, such as a tolerance, at run time.
 - **PDF, image and text files.**
 - **Page references** carried from the first step to the final output.
+- **Estimates that correct themselves:** the engine measures what each step really produces and uses that
+  for scheduling and for the cost estimate.
 - **One scheduler for everything:** shared quota per model, interactive before bulk, retries, recovery when a
   worker dies.
 - **Versions and publishing:** what callers run only changes when a flow is published again.
