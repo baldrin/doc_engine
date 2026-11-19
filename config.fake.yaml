@@ -1,0 +1,101 @@
+# Document Engine configuration.
+# Copy to config.yaml and fill in the FILL-IN values. No secrets go in this file:
+# the gateway token and the Postgres password are read from the environment variables named below,
+# every time they are needed.
+
+gateway:
+  base_url: "http://127.0.0.1:8765"
+  token_env_var: FAKE_TOKEN
+  token_source: env                # env | databricks_oauth (the app's service principal, on Databricks Apps)
+  request_timeout_s: 600         # the documented execution limit is 597 s
+  max_connections: 512           # HTTP connection limit; must exceed worker.concurrency. Logged at startup.
+  streaming: auto                # auto: stream single long calls (reduce) to show progress | always | never
+  max_request_mb: 16             # checked before sending. Measured ceiling is between 18.3 and 23.5 MB.
+
+# One budget per model. The engine never shares a budget between models.
+# Sonnet 5.5 values were measured on the gateway (2026-11-14 to 16). Haiku and Opus values are
+# PLACEHOLDERS until `python -m doc_engine probe bucket --model <name>` has been run for them.
+models:
+  haiku:
+    label: "Claude Haiku"
+    gateway_name: "system.ai.claude-haiku-5-5"
+    itpm: 1000000
+    otpm: 100000
+    qph: 360000
+    bucket_capacity_output: 45000  # PLACEHOLDER (Sonnet's validated value)
+    bucket_measured: 40000
+    thinking_off: disabled       # how "thinking off" is sent: disabled | between_tools | effort_low
+    cache_min_tokens: 4096       # shorter static prompts are not cached, so no warm-up is sent
+    input_tokens_per_page: 1728
+    pricing: { input: 0.15, output: 0.75, cache_read: 0.015, cache_write: 0.1875 }   # short-context rate
+  sonnet:
+    label: "Claude Sonnet"
+    gateway_name: "system.ai.claude-sonnet-5-5"
+    itpm: 1000000
+    otpm: 100000
+    qph: 360000
+    bucket_capacity_output: 45000  # validated: 0 rejections in six runs. The gateway's own bucket is about 40K.
+    bucket_measured: 40000
+    thinking_off: between_tools  # {"type": "disabled"} returns 400 on this model
+    cache_min_tokens: 1024
+    input_tokens_per_page: 1728  # probe 7: 1,832 for a 1-page window, 1,623 per page in 4-page windows
+    pricing: { input: 3.00, output: 15.00, cache_read: 0.30, cache_write: 3.75 }
+  opus:
+    label: "Claude Opus"
+    gateway_name: "system.ai.claude-opus-5-5"
+    itpm: 1000000
+    otpm: 100000
+    qph: 360000
+    bucket_capacity_output: 45000  # PLACEHOLDER
+    bucket_measured: 40000
+    thinking_off: effort_low     # thinking cannot be turned off on this model; "off" sends the lowest effort
+    cache_min_tokens: 4096
+    input_tokens_per_page: 1728
+    pricing: { input: 6.00, output: 30.00, cache_read: 0.30, cache_write: 7.50 }
+
+ledger:
+  safety_margin_fraction: 0.05   # fraction of each cap left unused
+  capacity_mode: duration         # fixed: bucket_capacity_output x (1 - margin)
+                                 # duration: (bucket_measured + refill x half the learned call duration) x (1 - margin).
+                                 #   Adapts to short and long calls. Not yet run on the real gateway.
+  default_call_s: 9              # duration mode: call length assumed before a step has a profile
+  hold_on_429_s: 1               # the first 429 pauses admission for that model, for everyone, this long
+  hold_on_429_max_s: 15          # each further round of rejections doubles the pause, up to this. Equal to the above = fixed pause.
+  learn_estimates: true          # count in-flight calls at the learned mean output once a step has 3 samples
+  lease_s: 900                   # must exceed gateway.request_timeout_s
+  dead_worker_after_s: 30        # a worker that has not heartbeated this long is treated as gone
+  reaper_interval_s: 5
+
+worker:
+  enabled: true                  # run workers inside the web process. Set false to run `python -m doc_engine worker` separately.
+  concurrency: 128               # most model calls in flight per process
+  max_transient_attempts: 3      # timeouts, 5xx and invalid schema replies. A 429 never counts.
+  cache_warmup: true             # one warm-up call per model and static prompt; the step's calls wait for it
+  warmup_max_tokens: 1
+  warmup_min_tasks: 3            # no warm-up for steps with fewer calls than this
+  max_reference_pages: 100       # largest source that may be attached whole to a step as a reference
+  max_value_chars: 20000         # longest text or JSON value input; longer content goes in as a file
+  send_images_as: image          # image | pdf. Use pdf if preflight shows the gateway refuses image input
+  warmup_ttl_s: 240              # a warm entry newer than this is reused by other jobs
+  warmup_settle_s: 0             # optional pause after the warm-up before the first wave (first-wave cache misses)
+  first_wave_size: 0             # 0 = no limit. Otherwise release this many calls, then the rest after the first completes.
+
+postgres:
+  host: "127.0.0.1"
+  port: ""                       # empty: PGPORT, else 5432
+  dbname: "docengine"
+  user: "docengine"
+  password_env_var: PGPASSWORD   # NAME of the env var; read at every connect, so short-lived tokens work
+  password_source: env           # env | databricks_oauth (Lakebase from a Databricks App)
+  password_command: ""           # optional shell command that prints the password
+  sslmode: prefer
+  pool_size: 16
+
+server:
+  host: 0.0.0.0
+  port: 8100
+  saturating_jobs: 4             # submitting this many jobs at once (or more) asks for confirmation in the UI
+
+documents:
+  image_max_px: 1568             # an uploaded image is scaled down to this on its long edge
+  text_page_chars: 3000          # a text file is split into pages of about this many characters, at line ends

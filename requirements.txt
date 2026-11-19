@@ -1,0 +1,11 @@
+anthropic>=1.0,<2
+psycopg[binary]>=3.2
+pypdf>=4.0
+pyyaml>=6.0
+fastapi>=0.115
+uvicorn>=0.30
+jsonschema>=4.20
+pillow>=10.1
+python-multipart>=0.0.9
+databricks-sdk>=0.30          # only used with token_source / password_source: databricks_oauth
+pytest>=8.0                   # only needed to run the tests

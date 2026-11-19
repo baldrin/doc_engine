@@ -1,0 +1,14 @@
+# Databricks Apps entry point. See README, "Deploying to Databricks Apps".
+command: ["python", "-m", "doc_engine", "serve"]
+env:
+  - name: DOC_ENGINE_CONFIG
+    value: config.example.yaml          # runs from the example file; the values below fill in the rest
+  - name: DOC_ENGINE_GATEWAY_URL
+    value: "FILL-IN"                    # the workspace Anthropic-style endpoint
+  # Simplest: a personal access token stored as an app secret resource named "gateway-token".
+  - name: DATABRICKS_TOKEN
+    valueFrom: gateway-token
+  # Lakebase attached as an app resource provides PGHOST, PGPORT, PGDATABASE, PGUSER and PGSSLMODE.
+  # Its password is the app's own OAuth token:
+  - name: DOC_ENGINE_PG_PASSWORD_SOURCE
+    value: databricks_oauth
