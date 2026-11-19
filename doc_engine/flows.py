@@ -702,8 +702,12 @@ def estimate(graph: dict, pages: int | dict[str, int], cfg: Section, flow_id: st
     items: dict[str, int] = {}
     src_pages: dict[str, int] = {}          # pages of the source each node's material comes from
     per_node: dict[str, dict] = {}
-    total = {"calls": 0, "output_tokens": 0.0, "input_tokens": 0.0, "cached_tokens": 0.0, "cost": 0.0}
+    total = {"calls": 0, "warmups": 0, "output_tokens": 0.0, "input_tokens": 0.0, "cached_tokens": 0.0, "cost": 0.0}
     assumed = False
+    from . import prompts                    # here, not at the top: prompts imports this module
+    multi = len(sources(graph)) > 1
+    warmups = bool(cfg.worker.get("cache_warmup", True))
+    warmup_min = int(cfg.worker.get("warmup_min_tasks", 3))
     for nid in topo_order(graph):
         n = nodes[nid]
         if n["type"] == "source":
@@ -743,10 +747,13 @@ def estimate(graph: dict, pages: int | dict[str, int], cfg: Section, flow_id: st
         prof = profiles.get(profile_key(flow_id, nid, d["model"], d["thinking"])) or {}
         learned = (prof.get("n") or 0) >= 3
         out_per = prof["out_mean"] if learned else d["expected_output"]
-        static_tokens = text_tokens(d["system"]) + text_tokens(d["instructions"]) + 150
+        # The static prompt as the planner builds it: system, instructions, and the output contract or citation rule.
+        system = prompts.system_text(d, multi)
+        static_tokens = text_tokens(system) + 150
         if ed["consume"] in ("pages", "both"):
-            pages_per = doc_pages / max(1, calls) if ins == "reduce" else (1 if ins == "filter" else
-                                                                             min(int(ed["window"]), max(1, n_in)))
+            # A filter passes on whole items: each call covers the pages of one upstream item.
+            pages_per = (doc_pages / max(1, calls) if ins == "reduce" else doc_pages / max(1, n_in) if ins == "filter"
+                         else min(int(ed["window"]), max(1, n_in)))
             dyn = pages_per * per_page
         else:
             dyn = 0.0
@@ -762,12 +769,15 @@ def estimate(graph: dict, pages: int | dict[str, int], cfg: Section, flow_id: st
             elif rn["id"] in per_node:
                 ref_tokens += per_node[rn["id"]].get("items_out", 0) * per_node[rn["id"]].get("out_per", 800)
         dyn += ref_tokens
-        cacheable = static_tokens >= float(m.get("cache_min_tokens", 1024)) and calls >= 2
+        # The planner's rule for marking a prompt as cacheable, and its rule for sending a warm-up first.
+        cacheable = prompts.is_cacheable(cfg, d["model"] if d["model"] in cfg.models else next(iter(cfg.models)), system) and calls >= 2
+        warmup = 1 if cacheable and warmups and calls >= warmup_min else 0
         price = m.pricing
         if cacheable:
-            in_cost = (static_tokens * price.cache_write + (calls - 1) * static_tokens * price.cache_read
+            reads = calls if warmup else calls - 1          # a warm-up writes the prompt; every call then reads it
+            in_cost = (static_tokens * price.cache_write + reads * static_tokens * price.cache_read
                        + calls * dyn * price.input) / 1e6
-            cached = (calls - 1) * static_tokens
+            cached = reads * static_tokens
         else:
             in_cost = calls * (static_tokens + dyn) * price.input / 1e6
             cached = 0.0
@@ -778,8 +788,9 @@ def estimate(graph: dict, pages: int | dict[str, int], cfg: Section, flow_id: st
                          "items_out": items[nid], "out_per": out_per, "output_tokens": out_tokens, "cost": cost,
                          "model": d["model"], "learned": learned, "instruction": ins,
                          "window": ed["window"], "overlap": ed["overlap"],
-                         "reference_tokens": ref_tokens, "input_per_call": static_tokens + dyn}
-        total["calls"] += calls
+                         "reference_tokens": ref_tokens, "input_per_call": static_tokens + dyn, "warmup": warmup}
+        total["calls"] += calls                 # warm-ups are counted apart: they do no work of the flow
+        total["warmups"] += warmup
         total["output_tokens"] += out_tokens
         total["input_tokens"] += calls * (static_tokens + dyn)
         total["cached_tokens"] += cached

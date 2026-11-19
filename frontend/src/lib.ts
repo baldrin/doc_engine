@@ -135,6 +135,7 @@ export interface Estimate {
   input_tokens?: number;
   cost: number;
   pages: number;
+  warmups?: number;
   assumed_filter_ratio?: boolean;
   per_node: Record<string, any>;
 }

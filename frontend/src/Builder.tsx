@@ -1008,6 +1008,7 @@ function BuilderInner({ flowId }: { flowId: string }) {
                   </div>
                 ) : null}
                 {estimate?.assumed_filter_ratio ? <p className="hint">A filter's share is assumed to be 25% until the flow has run once.</p> : null}
+                {estimate?.warmups ? <p className="hint">Plus {estimate.warmups} small warm-up call{estimate.warmups === 1 ? "" : "s"} that store{estimate.warmups === 1 ? "s" : ""} a long prompt for reuse. Skipped when another run has just done it.</p> : null}
                 <p className="hint">Right click a block for more actions. <kbd>Del</kbd> removes the selection, <kbd>F2</kbd> renames, <kbd>{DUP_KEY}</kbd> duplicates.</p>
               </>
             )}
