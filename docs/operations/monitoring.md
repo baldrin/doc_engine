@@ -319,8 +319,10 @@ Warnings and errors, and what they mean:
 | `returned N task(s) to the queue after a lost worker or lease` | Calls were recovered from a worker that stopped, or from calls that outlived `ledger.lease_s`. |
 | `notification listener lost (...); relying on timed checks, retrying in 5 s` | `LISTEN/NOTIFY` is not working. The engine keeps going on timed checks. |
 | `event hub: ...` | The live feed to the browsers could not read the `events` table this time. |
-| `unexpected error during a model call` | A call failed with an error that is not a gateway reply, for example a missing token. A traceback follows. |
+| `unexpected error during a model call` | A call failed with an error that is not a gateway reply. A traceback follows. A missing token is not reported this way: it counts as a gateway error and is tried again. |
 | `task N failed inside the worker` | A call could not be prepared or recorded. A traceback follows; the job fails with `worker error: ...`. |
+| `task N: could not record its reply (...); trying again in N s`, `task N: could not record its reply (...); returning it to the queue` | The database was away while a reply was being recorded. The worker waits through about a minute, then returns the call to the queue. The job does not fail. |
+| `task N: the database was not reachable (...); returning it to the queue` | The database was away while a call was being prepared. The call goes back to the queue and the job does not fail. |
 | `could not record the failure of task N`, `could not return task N to the queue; the reaper will` | The database was unavailable at that moment. The call is recovered later by the check for lost calls. |
 | `worker cleanup failed` | The worker could not tidy up while stopping. Its calls are recovered by another worker. |
 

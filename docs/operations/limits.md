@@ -23,9 +23,13 @@ gateway. For operators, and for anyone deciding whether Document Engine is ready
 | Limit | Value | Set by | What happens beyond it |
 |---|---|---|---|
 | Size of an uploaded file | 200 MB | Fixed in the code | The upload is refused: `<name> is larger than 200 MB`. The upload stops being read at that size, so an oversized file is never held in memory whole. On the public endpoint the reply is HTTP 413 with the code `file_too_large`. |
+| A form upload on the public endpoint | 200 MB for each file input of the flow, plus 4 MB | Fixed in the code | Refused by its declared length before any of it is read: HTTP 413 with the code `file_too_large`. A form upload with no `Content-Length` header is refused with HTTP 411 and the code `length_required`. |
+| A JSON body on the job-start address of the public endpoint | 2 MB | Fixed in the code | HTTP 413 with the code `request_too_large`. |
+| Any other request that is not a file upload | 20 MB | Fixed in the code | Refused by its declared length: HTTP 413 with the code `request_too_large`. |
 | Size of a text file | 5 MB | Fixed in the code | Refused: `<name> is larger than 5 MB of text. Split it, or send it as a PDF.` |
 | Page size of a text file | About 3,000 characters, never under 200 | `documents.text_page_chars` | A longer file gets more pages. A single line longer than a page is split across pages. |
 | Size of an image | Scaled down to 1,568 pixels on its long edge | `documents.image_max_px` | The image is scaled when uploaded, and stored as PNG or JPEG. The code aims to keep the stored image under 3.5 MB. |
+| Pixels of an image as uploaded | 60 million (width times height) | Fixed in the code | Refused before the image is decoded: `<name> is W by H pixels, which is too large. The limit is 60 million pixels.` |
 | Frames of an animated GIF or multi-page TIFF | The first only | Fixed in the code | The other frames are ignored. |
 | File kinds | PDF, image (PNG, JPEG, GIF, WebP, BMP, TIFF), text | Fixed in the code | Office files, zip archives and unknown binary files are refused. |
 | Files per source | One | Not built | See [What is not built](#what-is-not-built). |

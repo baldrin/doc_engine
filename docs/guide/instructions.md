@@ -146,7 +146,7 @@ The value can also be a [value input](value-inputs.md), so that it is set for ea
 |---|---|
 | `equals` | The field has a value and it is the same as the rule's value. |
 | `not equals` | The field is different from the rule's value, or has no value. |
-| `in` | The field equals one of several values. Write the values separated by commas. |
+| `in` | The field equals one of several values. Write the values separated by commas, or use a JSON [value input](value-inputs.md#using-an-input-in-a-filter-rule) that holds a list. |
 | `contains` | For a list field: one of its entries equals the value. For any other field: the value appears somewhere in the field's text. |
 | `is true` | The field is true. |
 | `is false` | The field is false. |

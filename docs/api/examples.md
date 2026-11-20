@@ -161,6 +161,8 @@ What to notice:
   works, so the caller does not need to know what the input is called.
 - `wait` treats `failed` and `cancelled` as final, the same as `done`. A loop that waits only for `done`
   never ends when a job fails.
+- `requests` sends a `Content-Length` header with the form, which the endpoint requires. A client that sends
+  a form without one is answered `411` with the code `length_required`.
 
 ## Shell
 

@@ -44,7 +44,7 @@ On the [Flows screen](flows-screen.md), a flow that has a published version is m
 
 - It does not change what callers run.
 - It checks the flow first. A flow with problems is not saved as a version: the message reads **Fix the problems before saving a version.** and the problem list opens over the canvas.
-- When nothing has changed since the latest version, it makes no new version and says so: **Nothing has changed since v4. No new version was saved.** Moving a block does not count as a change.
+- When nothing has changed since the latest version, it makes no new version and says so: **Nothing has changed since v4. No new version was saved.** Moving a block does not count as a change. A change to the flow's description alone does, for **Save version** and for **Publish**.
 
 Use it to mark a state you may want to refer to: before a large change, or after a test run that went well. A test run records the number of the latest version at the time it was started; the flow it actually runs is the draft on the canvas.
 
@@ -84,7 +84,7 @@ A flow that is not published cannot be started from code: a caller who names it 
 
 **Two published flows cannot share a name.** Callers run a flow by its name, so the name must lead to exactly one flow.
 
-Names are compared the way callers may write them: without regard to upper and lower case, spacing or punctuation. `Invoice check`, `invoice-check` and `INVOICE  CHECK!` are all the same name.
+Names are compared the way callers may write them: without regard to upper and lower case, spacing or punctuation. `Invoice check`, `invoice-check` and `INVOICE  CHECK!` are all the same name. Letters and digits of every script count, so names in non-Latin scripts work, and accented letters matter: `cafe` and `café` are different names.
 
 | Situation | What happens when you choose Publish |
 |---|---|
@@ -97,7 +97,7 @@ Unpublished flows may share names freely, with each other and with a published f
 
 ## Edits are not live until you publish again
 
-Callers always run the published version. Changes you make in the builder after publishing, to prompts, connections, models, inputs or anything else on the canvas, are saved to the draft and have no effect on what callers run.
+Callers always run the published version. Changes you make in the builder after publishing, to prompts, connections, models, inputs or anything else on the canvas, are saved to the draft and have no effect on what callers run. The same holds for the flow's description: callers see the one stored with the published version.
 
 This means you can work on a published flow safely:
 

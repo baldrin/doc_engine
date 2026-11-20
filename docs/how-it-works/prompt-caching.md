@@ -77,6 +77,7 @@ The entry is recorded when a warm-up *completes*. Jobs that are submitted in the
 
 - If one has already been sent, or sits ahead of this job in the [queue](queue-and-priority.md), the step's calls wait for that one. No second warm-up is created.
 - Otherwise the job sends its own. A job never waits behind work it would otherwise go ahead of: an interactive job does not wait for the unsent warm-up of a bulk job.
+- A warm-up that has already been sent is shared whatever its place in the queue. When the job that joins it is ahead of the warm-up's own job in the queue, the warm-up takes the joining job's place. If the warm-up then comes back to the queue, after a rejection, a gateway error or a lost worker, it does not wait behind work the joining job goes ahead of.
 
 Ten jobs submitted together therefore send one warm-up for their first step, not ten. The calls of all ten wait for it and become `ready` when it completes.
 

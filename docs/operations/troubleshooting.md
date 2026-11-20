@@ -47,6 +47,7 @@ Each line names one problem.
 | `models: at least one model is required` | Add a model under `models`. |
 | `models.<name>.<field> is missing` | Add the field. `gateway_name`, `itpm`, `otpm`, `bucket_capacity_output` and `pricing` are required for every model. |
 | `models.<name>.thinking_off must be disabled, between_tools or effort_low` | Use one of the three forms. |
+| `ledger.safety_margin_fraction is <value>; it must be 0 or more and below 1` | Set a value from 0 up to, but not including, 1. |
 | `ledger.lease_s must exceed gateway.request_timeout_s` | Raise `lease_s` or lower `request_timeout_s`. |
 | `gateway.max_connections must exceed worker.concurrency` | Raise `max_connections` or lower `concurrency`. |
 
@@ -103,7 +104,7 @@ Preflight ends with `preflight found problems (see above)`. Find the line that c
 | `tables missing (...)` | The schema has not been applied. | `python -m doc_engine db init` |
 | `LISTEN/NOTIFY: not available (...)` | The database does not support notifications on this connection. | Nothing is required. Workers then notice new work by timed checks, at most a second late. This line does not make preflight fail. |
 | `skipped: gateway.base_url is not set` | `gateway.base_url` is `FILL-IN` and `DOC_ENGINE_GATEWAY_URL` is not set. | Set one of them. |
-| `thinking off as '<form>': permanent HTTP None: RuntimeError: environment variable DATABRICKS_TOKEN is not set (gateway token)` | The token variable is not exported. | See [The token variable is not set](#the-token-variable-is-not-set). |
+| `thinking off as '<form>': transient HTTP None: could not get a gateway token: RuntimeError: environment variable DATABRICKS_TOKEN is not set (gateway token)` | The token variable is not exported. | See [The token variable is not set](#the-token-variable-is-not-set). |
 | `thinking off as '<form>': permanent HTTP 400: ...` | The model refuses the configured form. | See [the next section](#a-model-refuses-its-thinking-off-form). |
 | `thinking off as '<form>': permanent HTTP <401, 403 or 404>: ...` | The token is not accepted, or `gateway.base_url` or the model's `gateway_name` is wrong. The gateway's own message follows the colon. | Check the token, the address and the model name. Every model fails the same way when the token or address is at fault. |
 | `thinking off as '<form>': transient ...` | A timeout, a connection failure, or a server error from the gateway. | Check that the address is reachable from this machine, then try again. |
@@ -221,11 +222,12 @@ discarded. Nothing resumes a failed job: fix the cause and run it again.
 |---|---|---|
 | `Request failed (HTTP <status>): ...` | The gateway refused the request for good. It is not retried. A 400 usually means a request form the model does not accept; see the two sections above. Other statuses point at the token, the address or the model name. | Run `python -m doc_engine preflight`: it makes the same kind of call and names the problem. |
 | `Request failed: request is N MB; the limit is 16 MB. Use a smaller window.` | The request was larger than `gateway.max_request_mb` and was not sent. | Use a smaller window on the step, or a smaller whole-file reference. |
-| `Request failed: RuntimeError: environment variable DATABRICKS_TOKEN is not set (gateway token)` | See [below](#the-token-variable-is-not-set). | Export the token and restart. |
 | `Request failed: worker error: ...` | The worker could not build or record the call. The log has a traceback under `task N failed inside the worker`. One cause is a file that was removed from the database while the job needed it. | Read the traceback. |
 | `Gateway error (HTTP <status>): ...` | The gateway answered 408, 409, 500, 502, 503, 504 or 529, `worker.max_transient_attempts` times in a row for the same call. | Try again later. Raise `max_transient_attempts` if the endpoint is often unsteady. |
 | `Gateway error: APITimeoutError: ...` | The call took longer than `gateway.request_timeout_s`, on every attempt. | Reduce what the step is asked to write, or its window. |
 | `Gateway error: APIConnectionError: ...` | The gateway could not be reached, on every attempt. | Check `gateway.base_url` and the network. |
+| `Gateway error: the streamed reply ended before it was complete` | A streamed reply stopped part-way, on every attempt. An error the gateway reports inside a streamed reply, or a connection lost while one is read, is retried the same way. | Try again later. |
+| `Gateway error: could not get a gateway token: RuntimeError: environment variable DATABRICKS_TOKEN is not set (gateway token)` | See [below](#the-token-variable-is-not-set). | Export the token and restart. |
 | `Invalid reply: the reply did not match the output schema: ...` | A step with a schema output got a reply that was not valid for the schema, on every attempt. | Simplify the schema or make the prompt more explicit. A reply cut off at the maximum output is a common cause: raise the step's maximum output. |
 | `Empty reply: the reply held no text (stop_reason ..., blocks [...])` | The model returned no text. With `stop_reason max_tokens`, thinking used the whole maximum output. Not retried. | Raise the step's maximum output, or lower its thinking level. |
 | `this call was returned to the queue N times because the worker sending it stopped each time. It was not sent again.` | The same call lost its worker, or outlived its lease, more than `ledger.max_recoveries_per_call` times (3). The error has the form `<step title>: this call was returned ...`. | Look in the log for why workers stop while they send this call. Then run the job again. |
@@ -244,13 +246,14 @@ For the full detail of a failure, query the job's calls that did not succeed:
 
 ### The token variable is not set
 
-The application starts without a token. The first model call then fails, and the job with it:
+The application starts without a token. A call that cannot get a token counts as a gateway error and is tried
+again. When its attempts run out, the job fails:
 
 ```text
-Request failed: RuntimeError: environment variable DATABRICKS_TOKEN is not set (gateway token)
+Gateway error: could not get a gateway token: RuntimeError: environment variable DATABRICKS_TOKEN is not set (gateway token)
 ```
 
-The log shows `unexpected error during a model call` with a traceback. Export the variable named by
+Export the variable named by
 `gateway.token_env_var` in the shell or the deployment that starts the application, and restart. The token is
 read for every call, so the variable must be present in the application's own environment.
 
@@ -281,6 +284,7 @@ The message names the file. The kind of a file is decided from its content first
 | `<name> has no pages` | A PDF with no pages. | Check the file. |
 | `<name> could not be read as an image` | The name has an image ending but the content is not a readable image. | Re-export the image. |
 | `<name> is an empty image` | The image has no width or height. | Check the file. |
+| `<name> is W by H pixels, which is too large. The limit is 60 million pixels.` | The image is larger than 60 million pixels. | Scale the image down and upload it again. |
 | `<name> is not a file type this can read. Send a PDF, an image (PNG, JPEG, GIF, WebP, BMP, TIFF) or a text file.` | Binary content of an unknown kind. | Convert it. |
 | `<name> is larger than 5 MB of text. Split it, or send it as a PDF.` | A text file over the text limit. | Split it or convert it. |
 | `<name> holds no text` | A text file with only blank lines. | Check the file. |

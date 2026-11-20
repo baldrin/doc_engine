@@ -35,13 +35,13 @@ The type is decided when the file is uploaded, from the file's content first and
 
 The checks run in this order:
 
-1. **PDF**: the file starts with a PDF header.
+1. **PDF**: the file starts with a PDF header (`%PDF-`). A file named `.pdf` also counts when the header comes later within its first kilobyte. A text file that merely mentions `%PDF-` is treated as text.
 2. **Image**: the file starts with the signature of a PNG, JPEG, GIF, TIFF or WebP image. A BMP image is recognised by its signature together with the ending `.bmp`.
 3. **Office file**: the name ends in an office ending (such as `.docx`, `.xlsx`, `.pptx`, `.doc`, `.odt`, `.rtf`), or the content has the signature of an office file. These are [refused](#what-is-refused).
 4. **Zip archive**: the content has the signature of a zip archive and does not look like an office file. Refused, with its own message.
 5. **Damaged image or PDF**: the name ends in an image ending or in `.pdf`, but the content is not one. Refused.
 6. **Other binary content**: refused.
-6. **Text**: everything else.
+7. **Text**: everything else.
 
 So "text" means any file that holds readable characters, whatever its ending. The upload button suggests common endings (`.txt`, `.md`, `.csv`, `.tsv`, `.json`, `.xml`, `.log`, `.yaml`, `.yml`), but the list is only a suggestion.
 
@@ -96,6 +96,7 @@ Page references are followed on the [Results screen](results-screen.md).
 | Size of an upload | 200 MB | Any type. |
 | Size of a text file | 5 MB | Larger text is refused, with the advice to split it or send it as a PDF. |
 | Image long edge | 1,568 pixels | Larger images are scaled down, not refused. Setting: `documents.image_max_px`. |
+| Image size as uploaded | 60 million pixels | Width times height. A larger image is refused. |
 | Text page size | 3,000 characters | Setting: `documents.text_page_chars`. |
 | Size of one request to the model | 16 MB | Setting: `gateway.max_request_mb`. A call whose pages exceed it is not sent, and the job fails with a message giving the size and advising a smaller window. This mostly concerns large windows of heavy scanned PDFs. |
 | Source used whole as a [reference](several-files.md#references) | 100 pages | Setting: `worker.max_reference_pages`. |
@@ -114,6 +115,7 @@ A refused upload stores nothing. The message says why.
 | Word, Excel, PowerPoint and other office files | *name* **is an office file, which is not supported. Save it as a PDF and upload that.** |
 | A zip archive | *name* **is a zip archive, which is not supported. Upload the files inside it one at a time.** |
 | A file with an image ending that is not a readable image | *name* **could not be read as an image.** |
+| An image above 60 million pixels | *name* **is** *width* **by** *height* **pixels, which is too large. The limit is 60 million pixels.** |
 | A file ending in `.pdf` that is not a readable PDF, or a damaged PDF | *name* **could not be read as a PDF.** |
 | A PDF with no pages | *name* **has no pages** |
 | Any other binary file, such as a program or an archive that is not a zip | *name* **is not a file type this can read. Send a PDF, an image (PNG, JPEG, GIF, WebP, BMP, TIFF) or a text file.** |

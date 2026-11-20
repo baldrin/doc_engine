@@ -23,7 +23,9 @@ Every request and reply of the public endpoint, with its fields and error codes.
 - All addresses begin with `/api/v1`. Replies are JSON in UTF-8.
 - Times are ISO 8601 with a time zone offset, for example `2026-11-18T12:13:26.108966-06:00`.
 - `{flow}` is a flow's **name** or its **flow id**. In a name, case, spacing and punctuation do not matter, so
-  a name can be written with hyphens in place of spaces. Names with other characters must be URL-encoded.
+  a name can be written with hyphens in place of spaces. Letters and digits of every script count, so names in
+  non-Latin scripts work and accented letters matter: `cafe` and `café` are different names. Names with other
+  characters must be URL-encoded.
 - Names of file inputs follow the same rule. Names of value inputs ignore case and extra spaces.
 - Only **published** flows exist here. See [Publishing a flow](../guide/publishing.md).
 
@@ -50,7 +52,7 @@ Describes one published flow: what to send and what comes back.
 | `name` | string | The flow's name |
 | `flow_id` | string | The flow's id. It does not change when the flow is renamed. |
 | `version` | number | The published version. This is the version a job will run. |
-| `description` | string | The flow's description, or `""` |
+| `description` | string | The flow's description as stored with the published version, or `""` |
 | `files` | array | One entry per source of the flow: `{ "name": "Invoice" }`. Each needs a file on every run. |
 | `values` | array | The flow's value inputs. See the next table. |
 | `outputs` | array | One entry per Output block: `{ "name": "Invoice verdict", "format": "text" }`. `format` is `text` or `table`. |
@@ -85,6 +87,10 @@ naming files that are already stored.
 | `priority` | Optional. `interactive` (the default) or `bulk` |
 | `label` | Optional. A short text shown beside the job on the Activity screen. The default is `API`. |
 
+A form request must carry a `Content-Length` header; without one the reply is `411 length_required`. A form
+whose declared length is more than 200 MB for each file input of the flow, plus 4 MB, is refused with
+`413 file_too_large` before any of it is read.
+
 ### As JSON (`application/json`)
 
 ```json
@@ -103,15 +109,17 @@ naming files that are already stored.
 | `priority` | string | Optional. `interactive` or `bulk`. |
 | `label` | string | Optional. |
 
+A JSON body may be at most 2 MB. A larger one answers `413 request_too_large`.
+
 ### How values are read
 
 | Type | Accepted |
 |---|---|
 | `text` | Any text |
-| `number` | A JSON number, or text such as `10`, `0.5` or `1,250` |
+| `number` | A JSON number, or text such as `10`, `0.5` or `1,250`. A comma is accepted only as a thousands separator (`1,250`, `1,250.5`): `1,5` is refused with a message asking for a decimal point. A number too large to represent is refused. |
 | `yesno` | `true` or `false`, or the text `yes`, `no`, `true`, `false`, `y`, `n`, `1`, `0` |
 | `choice` | One of the input's choices. Case and spacing do not matter. |
-| `json` | Any JSON value. In a form, JSON written as text. |
+| `json` | Any JSON value. In a form, JSON written as text. A JSON value that is itself a piece of text is passed on unchanged. |
 
 An input that is not sent, or is sent empty, takes its default. An input with no default must be sent. Text
 and JSON values are limited to 20,000 characters (`worker.max_value_chars`); longer content belongs in a file.
@@ -140,7 +148,8 @@ When several things are wrong with the values, the message lists all of them.
 | `results_url` | string | Where the results will be |
 
 **Errors:** `400 invalid_request`, `400 invalid_values`, `400 invalid_file`, `400 file_not_found`,
-`413 file_too_large`, `404 flow_not_found`, `404 flow_not_published`, `409 flow_name_ambiguous`.
+`411 length_required`, `413 file_too_large`, `413 request_too_large`, `404 flow_not_found`,
+`404 flow_not_published`, `409 flow_name_ambiguous`.
 
 ## GET /api/v1/jobs/{job_id}
 
@@ -260,7 +269,10 @@ Files sent through the endpoint are listed on the [Files screen](../guide/files-
 tag, and can be removed there. They do not appear in the builder's file pickers, unless someone later uploads
 the same file under the same name from a screen.
 
-**Errors:** `400 invalid_request` (no name), `400 invalid_file`, `413 file_too_large`.
+A form upload must carry a `Content-Length` header, and its declared length may be at most 200 MB plus 4 MB.
+
+**Errors:** `400 invalid_request` (no name), `400 invalid_file`, `411 length_required` (a form with no
+`Content-Length` header), `413 file_too_large`.
 
 ## Errors
 
@@ -286,7 +298,9 @@ Every error reply has the same shape:
 | 409 | `job_not_finished` | Results were asked for too early | Keep polling the status |
 | 409 | `job_failed` | Results were asked for, but the job failed. `error` holds the reason. | Read the reason; see [Troubleshooting](../operations/troubleshooting.md) |
 | 409 | `job_cancelled` | Results were asked for, but the job was cancelled | Start a new job |
-| 413 | `file_too_large` | A file is larger than 200 MB | Split the file |
+| 411 | `length_required` | A form upload came without a `Content-Length` header | Send the header |
+| 413 | `file_too_large` | A file is larger than 200 MB, or a form request is larger than 200 MB for each file input of the flow, plus 4 MB | Split the file |
+| 413 | `request_too_large` | A JSON body on the job-start address is larger than 2 MB, or another request that is not a file upload is larger than 20 MB | Send long content as a file |
 
 A reply with status `5xx` is a fault in the application, not in the request. Try again later. A job id
 exists only in a `202` reply, so a request that failed this way has no job to poll.

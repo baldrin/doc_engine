@@ -200,7 +200,9 @@ job.
   published again. Each job records the `flow_version` it ran.
 - **A flow is addressed by its name.** Case, spacing and punctuation do not matter:
   `Check an invoice against its order`, `check-an-invoice-against-its-order` and
-  `check_an_invoice_against_its_order` are the same flow. The name is the one the flow had when it was
+  `check_an_invoice_against_its_order` are the same flow. Letters and digits of every script count, so
+  names in non-Latin scripts work and accented letters matter: `cafe` and `café` are different names. The
+  name is the one the flow had when it was
   published: renaming it in the builder takes effect for callers at the next publish. The flow id
   (`flow_sample_three_way`) also works and never changes.
 - **A refused request leaves nothing behind.** Everything is checked before a job exists. If a value is
@@ -210,6 +212,10 @@ job.
 - **Jobs share one queue with everyone else.** A job is `interactive` unless the request says
   `priority=bulk`. Interactive jobs go ahead of bulk jobs. Use `bulk` for large background work.
 - **File types:** PDF, image or text. See [File types](../guide/file-types.md).
+- **Sizes.** A file may be at most 200 MB, and a JSON body on the job-start address at most 2 MB. A form
+  upload must carry a `Content-Length` header; without one the reply is `411` with the code
+  `length_required`. A request that is too large answers `413`. See the
+  [reference](reference.md#errors).
 
 ## See also
 

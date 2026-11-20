@@ -32,7 +32,7 @@ A flow is made of three kinds of block. A **source** stands for one file. A **st
 
 ## How your work is saved
 
-The builder saves the flow by itself shortly after every change, including moving a block. While it does, **Saving…** appears beside the version badge; if a save fails, **Not saved** appears there instead. What is saved this way is the *draft*: the flow as it is on the canvas.
+The builder saves the flow by itself shortly after every change, including moving a block. While it does, **Saving…** appears beside the version badge; if a save fails, **Not saved** appears there instead, and the save is tried again every 5 seconds. An edit made just before you leave the builder or close the tab is saved on the way out. What is saved this way is the *draft*: the flow as it is on the canvas.
 
 A draft is not a version. **Save version** and **Publish** make numbered versions; see [Publishing](publishing.md).
 
@@ -88,7 +88,7 @@ The estimate is recalculated a moment after anything that changes the flow's mea
 
 ### Save version, API and Publish
 
-**Save version** stores the flow as the next version and reports **Saved as v4**. It does not check the flow, so a flow with problems can still be saved as a version.
+**Save version** stores the flow as the next version and reports **Saved as v4**. A flow with problems is refused: fix what the problems bar lists first. When nothing has changed since the latest version, no new version is made.
 
 **Publish** checks the flow first. If there are problems it refuses with **Fix the problems before publishing.** and opens the problem list. Otherwise it stores the next version, makes it the published one, and reports **Published as v4**.
 
@@ -237,7 +237,7 @@ The shortcuts work when the cursor is not in a text field and no dialog is open.
 | `F2` | Renames the selected block. |
 | `Ctrl` + `D` (or `Cmd` + `D`) | Duplicates the selected block. |
 | `T` | Opens **Test this step** for the selected step. |
-| `Delete` or `Backspace` | Removes the selected block or connection. |
+| `Delete` or `Backspace` | Removes the selected block or connection. The keys work only while the canvas has the focus, not from a button or a tab in the right-hand panel. |
 | `Esc` | Closes a menu, the problem list or a dialog. |
 
 ### Quick add
@@ -340,14 +340,14 @@ What the builder checks:
 
 | Area | What must be true |
 |---|---|
-| The flow | It has at least one source, one step and one output, and no connection loops back to an earlier block. |
-| Sources | Each is connected to a step. When there are several, each has its own name. |
-| Steps | Each has an input, and exactly one connection it works through. It has a prompt (something in **System** or **Instructions**), a configured model, **Max output tokens** above zero and a known thinking setting. No two connections come from the same block. |
+| The flow | It has at least one source, one step and one output, and no connection loops back to an earlier block. Every block is of a kind the builder knows. |
+| Sources | Each is connected to a step. When there are several, each has its own name, with at least one letter or digit. Names that differ only in upper and lower case, spacing or punctuation count as the same name. |
+| Steps | Each has an input, and exactly one connection it works through. It has a prompt (something in **System** or **Instructions**), a configured model, **Max output tokens** above zero and a known thinking setting. No two connections come from the same block. No step is fed by an output block. |
 | Schema outputs | At least one named field, no two fields with the same name, and allowed values for every `one of` field. |
 | Map | **Window size** is at least 1 and **Overlap** is smaller than the window. |
 | Filter | The earlier step has a schema output; the rule names one of its fields; the rule has a value, unless the comparison is `is true` or `is false`. |
 | Outputs | Each has exactly one connection, from a step. |
-| Value inputs | Each has a name without braces, no two share a name, a choice input has its list of choices, a default is valid for its type, and every `{{Name}}` in a prompt or rule names a declared input. |
+| Value inputs | Each has a name without braces, no two share a name, a choice input has its list of choices, a default is valid for its type, and every `{{Name}}` in a prompt or rule names a declared input. A rule left on a connection that is no longer a Filter is ignored. |
 
 > **Tip:** When you lower **Window size** to 1 on a connection that still has **Overlap** 1, the builder reports that the overlap must be smaller than the window. Set **Overlap** to 0.
 

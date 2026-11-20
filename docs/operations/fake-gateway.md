@@ -145,6 +145,7 @@ python -m fake_gateway [options]
 | `--cache-min-tokens` | `1024` | A marked prompt shorter than this is not cached. |
 | `--cache-ttl-s` | `300` | How long a cache entry lives after its last use. |
 | `--max-body-mb` | `20` | Requests larger than this get the "malformed JSON" 400. |
+| `--stream-faults` | `0` | Makes the first N streamed replies fail part-way: by turns an error reported inside the stream, and a stream that ends with no closing events. |
 
 ## The speed option and capacity mode
 

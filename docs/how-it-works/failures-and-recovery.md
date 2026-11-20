@@ -29,12 +29,12 @@ The gateway client never retries by itself. Every outcome comes back to the work
 | What happened | Retried | Uses an attempt | End result if it keeps happening |
 |---|---|---|---|
 | Rejection, HTTP 429 | Yes | No | The task waits; the model is paused briefly each time. The job fails after `worker.max_rejections_per_call` rejections of the same call |
-| Timeout, connection error, server error | Yes, after a wait | Yes | The job fails after `worker.max_transient_attempts` attempts |
+| Timeout, connection error, server error, a streamed reply that breaks off, no gateway token | Yes, after a wait | Yes | The job fails after `worker.max_transient_attempts` attempts |
 | Reply does not match the output schema | Yes | Yes | The job fails after `worker.max_transient_attempts` attempts |
 | Other request error | No | | The job fails |
 | Refusal | No | | The job fails |
 | Empty reply | No | | The job fails |
-| Reply cut off at max output tokens | No | | Accepted and marked as cut off |
+| Reply cut off at max output tokens or at the model's context limit | No | | Accepted and marked as cut off |
 | Request too large | No | | The job fails before anything is sent |
 | Call above the model's input limit per minute | No | | The run is refused, or the job fails, before anything is sent |
 | Warm-up fails | As above, by kind | | The step runs without the cache. The job does not fail. |
@@ -46,7 +46,7 @@ On the **Run** screen each of these appears as a line in the event feed, and the
 
 ## Rejections (HTTP 429)
 
-**What it is.** The gateway refused the call because a rate limit was exceeded.
+**What it is.** The gateway refused the call because a rate limit was exceeded. A rate-limit error that the gateway reports inside a streamed reply counts as a rejection in the same way.
 
 **What the engine does.** It records the call with the limit named in the message (output, input or queries). It returns the task to the queue at its old place and raises the task's rejection count. It does not use an attempt. It adds nothing to the ledger's output level. It pauses the model, for every worker in every process. The first pause lasts `ledger.hold_on_429_s` (configured default 1 second). If a call sent after that pause is rejected too, the next pause is twice as long, and so on up to `ledger.hold_on_429_max_s` (configured default 15 seconds): 1, 2, 4, 8, 15. The first call accepted after a pause puts it back to the start. So a brief rejection costs one short pause, and a gateway that keeps rejecting is left alone for longer each time.
 
@@ -66,6 +66,8 @@ A call that would send more input tokens than its model accepts in a minute (`mo
 
 **What it is.** The call got no usable answer for a reason that may pass: a timeout after `gateway.request_timeout_s` (configured default 600 seconds), a lost connection, or an HTTP status of 408, 409, 500, 502, 503, 504 or 529.
 
+A streamed reply can also fail after it has begun. The gateway reports an overload or a server error part-way, the connection is lost while the reply is being read, or the reply ends without saying how it ended. Each of these counts as a gateway error, and the part of the reply that arrived is not used. A failure to get a gateway token counts as a gateway error too, because it says nothing about the call itself.
+
 **What the engine does.** It records the call, adds nothing to the ledger's output level, and returns the task to the queue at its old place with one attempt used. The task is not sent again at once: it waits 2 seconds before the second attempt and 10 seconds before the third (`worker.retry_delays_s`, configured default `[2, 10, 30]`; the last value is used for any further attempt). Other tasks are not held up while it waits. When the task has used `worker.max_transient_attempts` attempts, it fails, and the job fails with it.
 
 **What the user sees.** A line in the event feed that the step is retrying, with the error. If the attempts run out, the run fails with the step's name and "Gateway error", the HTTP status and the message.
@@ -74,13 +76,13 @@ A call that would send more input tokens than its model accepts in a minute (`mo
 
 ## Other request errors
 
-**What it is.** Any other HTTP error, for example 400 for a request the gateway does not accept, or 401 and 403 for a token that is missing, expired or not allowed. Also any unexpected error while making the call.
+**What it is.** Any other HTTP error, for example 400 for a request the gateway does not accept, or 401 and 403 for a token that is expired or not allowed. Also any unexpected error while making the call.
 
 **What the engine does.** It does not retry, because the same request would fail the same way. The task fails and the job fails.
 
 **What the user sees.** The run fails with the step's name and "Request failed", the HTTP status and the gateway's message.
 
-An error inside the worker while it prepares a request or records a result is treated the same way and is reported as a worker error.
+An error inside the worker while it prepares a request or records a result is treated the same way and is reported as a worker error. The exception is a database that cannot be reached: see [Database trouble](#database-trouble).
 
 ## Refusals
 
@@ -112,7 +114,7 @@ Raise the step's max output tokens or lower its thinking level, then run again.
 
 ## Truncation
 
-**What it is.** The reply reached the step's max output tokens and was cut off.
+**What it is.** The reply reached the step's max output tokens and was cut off. A reply that stopped because the model's context window was full (stop reason `model_context_window_exceeded`) counts as cut off in the same way.
 
 **What the engine does.** A cut-off reply that holds text is accepted. The call and the task are marked as truncated, the step continues, and later steps receive the cut-off text. The step's profile counts how often this happens.
 
@@ -158,6 +160,8 @@ The reaper treats a running task as abandoned when its lease has run out, when i
 
 **What the engine does.** The task returns to the queue at its old place. No attempt is used. The task's reservation in the ledger is closed, and its expected output is kept in the level, because the lost call may still complete at the gateway and be charged there. An event records the recovery. If the first call's reply does arrive later, because the worker was slow and not dead, the call is recorded, since it was paid for, and nothing else changes: the task belongs to whoever has it now, and it is counted once. Every process runs a reaper, so any surviving process recovers the work of a dead one, and a restarted process recovers its own.
 
+A call whose job has already been cancelled or has failed is not returned to the queue. It is set to `cancelled` and is not sent again. A warm-up is the exception: it is still returned, because calls of other jobs may be waiting for it.
+
 **What the user sees.** A line in the event feed that a lost call was returned to the queue. The job continues after a delay of up to about `ledger.dead_worker_after_s` plus `ledger.reaper_interval_s`.
 
 The lost call is made again. If it had already completed at the gateway, its reply is lost and its tokens were used twice.
@@ -172,7 +176,11 @@ The lost call is made again. If it had already completed at the gateway, its rep
 
 **What the engine does.** The operation is tried again on a fresh connection, up to three times. A new connection is attempted up to six times with growing pauses, and reads the database password again each time, so short-lived credentials keep working. If the dispatcher cannot ask for admission, it tries again after a second.
 
-Recording the result of a call is the sensitive moment, because the reply has been paid for. If it still fails after those tries, the worker keeps the reply and tries again for about a minute, with growing pauses. If the database is still away, the worker returns the task to the queue, and if even that fails, the reaper returns it once the lease or the heartbeat runs out. The call is then made again. The job does not fail.
+Recording the result of a call is the sensitive moment, because the reply has been paid for. If it still fails after those tries, the worker keeps the reply and tries again for about a minute, with pauses of 1, 3, 6, 10, 15 and 25 seconds. If the database is still away, the worker returns the task to the queue, and if even that fails, the reaper returns it once the lease or the heartbeat runs out. The call is then made again. The job does not fail.
+
+A call that could not be prepared because the database was away is handled the same way: its task goes back to the queue, and the job does not fail.
+
+> **Note:** the wait through a database interruption is not exercised by a test.
 
 **What the user sees.** For a short interruption, nothing or a pause. For an interruption of more than about a minute while a call is being recorded, a line in the event feed that a lost call was returned to the queue, and the cost of that call twice. The warnings are in the process log. See [Troubleshooting](../operations/troubleshooting.md).
 
@@ -184,6 +192,8 @@ One task that fails for good fails its job. When a job fails:
 - its tasks that have not been sent are cancelled;
 - its steps that are not done are marked failed;
 - its calls that are already in flight finish. They are recorded, their tokens count in the ledger and in the cost, and their results are discarded.
+
+A call of the job that comes back to the queue afterwards, after a [clean stop](#restart-of-the-whole-app) or a [lost worker](#a-worker-that-dies), is set to `cancelled` and is not sent again. A warm-up is the exception, because calls of other jobs may be waiting for it.
 
 Other jobs are not affected. A failed job is not resumed: correct the cause and submit it again.
 
@@ -199,7 +209,7 @@ Other jobs are not affected. A failed job is not resumed: correct the cause and 
 
 Everything the engine needs is in Postgres, so a restart loses no job.
 
-**A clean stop.** When the process is asked to stop, the worker cancels its calls in flight and returns their tasks to the queue at once, without using an attempt. Their expected output is kept in the ledger's level, since the gateway may still charge for them. The worker then removes itself from the `workers` table. A clean stop never fails a job for a call that was [returned too often](#a-worker-that-dies).
+**A clean stop.** When the process is asked to stop, the worker cancels its calls in flight and returns their tasks to the queue at once, without using an attempt. A call whose job has already ended is set to `cancelled` instead, unless it is a warm-up. Their expected output is kept in the ledger's level, since the gateway may still charge for them. The worker then removes itself from the `workers` table. A clean stop never fails a job for a call that was [returned too often](#a-worker-that-dies).
 
 **A hard stop.** When the process is killed, its tasks stay marked as running. They are recovered as described under [A worker that dies](#a-worker-that-dies), by another process or by the restarted one, after about `ledger.dead_worker_after_s`.
 

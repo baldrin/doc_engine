@@ -172,7 +172,8 @@ Three tiles sit under the gauges. Unlike the gauges, the first two describe this
 
 ### In flight
 
-The number of this run's calls that have been sent and have not yet come back.
+The number of this run's calls that have been sent and have not yet come back. It is cleared when the run is
+cancelled or fails.
 
 ### Rejections
 

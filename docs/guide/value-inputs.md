@@ -63,10 +63,10 @@ From a step's **Prompt** tab, **Manage inputs** (or **Add one**, when the flow h
 | Type | Accepts | Written into the prompt as |
 |---|---|---|
 | **Text** | Any text, up to 20,000 characters. | The text as sent. |
-| **Number** | A number, or text that reads as one. Thousands commas are removed, so `1,250` is 1250. | The number. A whole number is written without a decimal point: `10`, not `10.0`. |
+| **Number** | A number, or text that reads as one. A comma is accepted only as a thousands separator, so `1,250` is 1250 and `1,250.5` is 1250.5. `1,5` is refused, because it could mean one and a half. A number too large to represent is refused. | The number. A whole number is written without a decimal point: `10`, not `10.0`. |
 | **Choice** | One of the choices listed for the input. Upper and lower case and spacing do not matter when matching. | The choice as it is spelled in the list. |
 | **Yes / no** | Yes or no. From code, `true` and `false`, `yes` and `no`, `y` and `n`, `1` and `0` are all accepted. | `yes` or `no`. |
-| **JSON** | Any valid JSON, up to 20,000 characters: an object, a list, or a single value. | The JSON on one line. |
+| **JSON** | Any valid JSON, up to 20,000 characters: an object, a list, or a single value. | The JSON on one line. A value that is itself a piece of text is passed on unchanged. |
 
 The field for a JSON input warns **This is not valid JSON yet.** while what you have typed does not parse.
 
@@ -115,6 +115,8 @@ On the step's **Input** tab, with the instruction set to **Filter**:
 
 Rule values are compared without regard to upper and lower case, and `yes`/`no` match `true`/`false`, so a yes/no input can be compared with a `boolean` field.
 
+A JSON input that holds a list can be the value of an `in` rule: `page_type` `in` `{{Page types}}` keeps the items whose field equals one of the list's entries.
+
 ## Renaming and removing
 
 **Renaming.** When you rename an input in the **Inputs** editor, the builder renames it everywhere it is written: in the **System** and **Instructions** blocks of every step and in filter rule values. You do not need to edit the prompts by hand. Callers of the API send values by name, so after renaming an input of a published flow and publishing again, they must use the new name.
@@ -154,6 +156,7 @@ A run is refused, before any job exists and before anything is charged, in these
 |---|---|
 | A required input was not supplied | `Input "Name" is required and has no default.` |
 | The value is not of the input's type | `Input "Name" must be a number.` Likewise `text`, `yes or no`, `JSON`. |
+| A number is written with a decimal comma | `Input "Name" must be a number written with a decimal point, such as 1.5.` |
 | A choice is not on the list | `Input "Name" must be one of:` followed by the choices. |
 | A JSON value does not parse | `Input "Name" is not valid JSON.` |
 | A text or JSON value is too long | `Input "Name" is longer than 20,000 characters. Send long content as a file.` |

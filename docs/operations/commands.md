@@ -195,7 +195,7 @@ It prints `Document Engine on http://localhost:<port>`. The port is `DATABRICKS_
 `server.port` (8000). On start it applies the schema, copies the model limits into the `quota` table, and
 installs the samples if the database holds no flows and no files. A model that was taken out of the settings
 is removed from the `quota` table, and so from the quota panels, once none of its calls are waiting or in
-flight. Stop it with Ctrl+C: calls in flight are cancelled and their
+flight. `db init` does the same. `worker` and `load` do not: see below. Stop it with Ctrl+C: calls in flight are cancelled and their
 [tasks](../glossary.md#task) return to the queue.
 
 [Monitoring](monitoring.md#log-lines) lists the log lines it prints.
@@ -210,6 +210,10 @@ Runs a worker without the web application. It prints `worker <id> running. Ctrl+
 tables must already exist: without them it prints
 ``the database is not set up. Run `python -m doc_engine db init` first.`` and exits with code 1.
 
+On start it copies the model limits from its settings file into the `quota` table. It does not remove the
+quota row of a model that is missing from that file, so a worker started with another settings file cannot
+take a model away from the application.
+
 **When to use it.** When `worker.enabled` is `false` in the web process, or to add a process that makes calls.
 All workers share one quota through Postgres, so an extra worker adds room for calls in flight, not quota.
 
@@ -222,7 +226,8 @@ python -m doc_engine load --flow ID --document ID [--document "Source name=ID" .
 ```
 
 Submits several jobs at the same moment, waits for them, and prints a summary. It is the command-line way to
-see how the scheduler behaves under load.
+see how the scheduler behaves under load. Like `worker`, it updates the `quota` rows of the models in its
+settings file and does not remove the row of a model that is missing from it.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -401,7 +406,7 @@ python tests/e2e.py [--rounds N] [--speed X] [--quota-scale X] [--keep]
 
 Runs the whole application against the [fake gateway](fake-gateway.md) and checks that it still does what it
 did: the commands, the screens' API, the public endpoint, ten jobs at once, a cancelled job, a killed worker,
-and a gateway that rejects calls. It is not a command of `python -m doc_engine` and is not collected by
+a gateway that rejects calls, and streamed replies that fail part-way. It is not a command of `python -m doc_engine` and is not collected by
 `pytest`; run it directly.
 
 It needs only a reachable Postgres, the one `config.fake.yaml` and the `PG*` variables point at. It starts its

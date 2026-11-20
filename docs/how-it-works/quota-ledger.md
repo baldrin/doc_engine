@@ -67,6 +67,7 @@ Input is modelled the same way, with one difference: a call's estimated input is
 - The cap is the model's input limit per minute, less the safety margin. With the configured defaults that is 950,000.
 - The level drains at the input limit divided by 60 per second.
 - At completion, the estimate is replaced by the counted input: input tokens plus cache writes. Cache reads are not counted, as measured. A call that failed or was rejected has its estimate removed.
+- The estimate has been draining with the rest of the level since the call was admitted. So when the call ends, only the part of the estimate that has not yet drained is taken out of the level, and the counted input goes in less the same drain. Taking the whole estimate out would remove input that later calls added.
 
 The input estimate of a task is made when the task is planned: the pages of its window at the file's tokens per page, the output of earlier steps it receives, its references, and its static prompt when that is not cached.
 

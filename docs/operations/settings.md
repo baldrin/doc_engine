@@ -88,7 +88,7 @@ How the [quota ledger](../how-it-works/quota-ledger.md) decides what may be sent
 
 | Setting | Default | Meaning | When to change it |
 |---|---|---|---|
-| `safety_margin_fraction` | `0.05` | The share of each cap left unused. | Raise it if rejections appear in normal running. |
+| `safety_margin_fraction` | `0.05` | The share of each cap left unused. It must be 0 or more and below 1. | Raise it if rejections appear in normal running. |
 | `capacity_mode` | `fixed` | How the output cap is worked out. `fixed`: `bucket_capacity_output` × (1 − margin). `duration`: (`bucket_measured` + refill during half a call) × (1 − margin), using the learned call length when `learn_estimates` is `true`, so it adapts to short and long calls. With `learn_estimates: false` it always uses `default_call_s`. The quota panels and `/api/quota` show the cap that admission last used. | `duration` when call lengths are far from the 9 seconds `fixed` was validated with. |
 | `default_call_s` | `9` | In `duration` mode, the call length assumed until a step has three recorded calls, and always when `learn_estimates` is `false`. | When typical calls are much shorter or longer. |
 | `hold_on_429_s` | `1` | The first pause after a rejection: admission for that model stops this many seconds, for every worker. | Rarely. |
@@ -188,6 +188,7 @@ prints `config problems in <path>:` followed by one line per problem.
 | At least one model must be configured. | `models: at least one model is required` |
 | Each model must have `gateway_name`, `itpm`, `otpm`, `bucket_capacity_output` and `pricing`. | `models.<name>.<field> is missing` |
 | Each model's `thinking_off` must be one of the three forms. | `models.<name>.thinking_off must be disabled, between_tools or effort_low` |
+| `ledger.safety_margin_fraction` must be a number, 0 or more and below 1. | `ledger.safety_margin_fraction is <value>; it must be 0 or more and below 1`, or `ledger.safety_margin_fraction must be a number` |
 | `ledger.lease_s` must be larger than `gateway.request_timeout_s`. | `ledger.lease_s must exceed gateway.request_timeout_s` |
 | `gateway.max_connections` must be larger than `worker.concurrency`. | `gateway.max_connections must exceed worker.concurrency` |
 
@@ -196,19 +197,18 @@ If the file does not exist, the command stops with `config file not found: <path
 Values still set to `FILL-IN` do not stop a command. `preflight` reports them, and most other commands print
 `config still has FILL-IN values: ...` and carry on.
 
+The values of `ledger.capacity_mode`, `gateway.token_source` and `postgres.password_source` are read without
+regard to upper and lower case: `Duration` selects the `duration` mode.
+
 ## Values that are not checked
 
-A few settings are not validated. A mistyped value is accepted silently and behaves like this:
+Settings with a fixed set of values are checked at start: `ledger.capacity_mode`, `gateway.streaming`,
+`worker.send_images_as`, `gateway.token_source` and `postgres.password_source`. A value outside the set stops
+the application with a message that names the setting and the values it accepts. Each price of a model must
+be a number, and is checked at start too.
 
-| Setting | A value that is not recognised behaves as |
-|---|---|
-| `ledger.capacity_mode` | `fixed` (only the exact word `duration` selects duration mode) |
-| `gateway.streaming` | `never` |
-| `worker.send_images_as` | `image` |
-| `gateway.token_source`, `postgres.password_source` | `env` |
-
-A model's `pricing` is checked only for being present. A missing price inside it causes an error later, when
-a cost is worked out.
+Other settings, such as timings and sizes, are not checked for a sensible range. A mistyped number is used as
+it is written.
 
 ## Prices
 

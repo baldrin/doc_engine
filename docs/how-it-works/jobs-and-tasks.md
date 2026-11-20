@@ -134,7 +134,7 @@ Sources and outputs have rows too. A source is done from the start. An output is
 | `failed` | The call failed for good. |
 | `cancelled` | The job failed or was cancelled before this task finished. |
 
-A task goes from `running` back to `ready` when the gateway rejects the call with a 429, when a transient error or an invalid reply is retried, and when its worker is lost. [Failures and recovery](failures-and-recovery.md) covers each case.
+A task goes from `running` back to `ready` when the gateway rejects the call with a 429, when a transient error or an invalid reply is retried, and when its worker is lost. A task that comes back this way after its job has ended goes to `cancelled` instead, unless it is a warm-up. [Failures and recovery](failures-and-recovery.md) covers each case.
 
 Each task counts two things separately: **attempts** (transient errors and invalid replies, which are limited) and **rejections** (429s, which never use an attempt).
 
@@ -151,7 +151,7 @@ Every model call writes one row to the `calls` table, whether it succeeded or no
 | Request size in bytes | Checked against `gateway.max_request_mb` before sending |
 | HTTP status and outcome | `ok`, `429`, `transient`, `permanent`, `refusal`, `empty` or `invalid` |
 | Limit named by a 429 | Output, input or queries, read from the message text |
-| Stop reason, and whether the reply was cut off | A reply that stops at max output tokens is marked truncated |
+| Stop reason, and whether the reply was cut off | A reply that stops at max output tokens, or at the model's context limit (`model_context_window_exceeded`), is marked truncated |
 | Input tokens, output tokens, cache read, cache write | As the gateway reported them |
 | Gateway request id and error body | For following up a failed call |
 

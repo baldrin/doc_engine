@@ -221,7 +221,7 @@ ones appear depends on what the output holds.
 
 | Button | Shown when | What you get |
 |---|---|---|
-| **CSV** | The output is shown in table form. | A file named after the output, ending in `.csv`. The first line holds the column names as the step's schema spells them, **page** first. Every value is in double quotes. With several sources, the page value includes the input's name. |
+| **CSV** | The output is shown in table form. | A file named after the output, ending in `.csv`. The first line holds the column names as the step's schema spells them, **page** first. Every value is in double quotes. A cell that starts with `=`, `+`, `-` or `@` and is not a plain number gets a leading apostrophe, so that a spreadsheet reads it as text and not as a formula. With several sources, the page value includes the input's name. |
 | **Text** | At least one item of the output has text. | A file named after the output, ending in `.md`. It holds the text of every item, one after another with a blank line between, exactly as the model wrote it, so page references appear in their bracketed form. |
 
 Each button saves one output. For a flow with several outputs, open each tab and download it in turn.

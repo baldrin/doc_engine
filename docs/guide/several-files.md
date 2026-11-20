@@ -23,7 +23,7 @@ A flow can read more than one file in a run: two lists to compare, or an invoice
 Add one source block for each file the flow needs. Each source is a named **input** of the flow that takes exactly one file per run.
 
 - The name is the name of the block. Set it in the right-hand panel with the source selected. The first source you add is called **File**, the next **File 2**, then **File 3**; rename them to what they hold, such as `Purchase order` and `Invoice`.
-- When a flow has several sources, every source needs a name, and no two may share one. Upper and lower case do not make names different.
+- When a flow has several sources, every source needs a name, and no two may share one. Upper and lower case, spacing and punctuation do not make names different, because that is how the names a caller sends are matched. A name needs at least one letter or digit.
 - The name matters. It is how the model is told which file is which, how page references are labelled, and the name under which a caller of the [API](../api/README.md) sends that file.
 
 With several sources, the builder changes in a few places:
