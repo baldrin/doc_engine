@@ -36,6 +36,7 @@ import copy
 import json
 import math
 import re
+import unicodedata
 import uuid
 from typing import Any
 
@@ -143,7 +144,7 @@ def step_data(node: dict) -> dict:
     raw_max = d.get("max_tokens", 1500)
     try:
         d["max_tokens"] = max(0, int(float(raw_max))) if raw_max not in (None, "") else 0
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         d["max_tokens"] = 0
     d.setdefault("thinking", "off")
     out = dict(d.get("output") or {})
@@ -255,7 +256,14 @@ def rule_matches(rule: dict, data: dict | None) -> bool:
     if op == "not_equals":
         return v is None or norm(v) != norm(target)
     if op == "in":
-        opts = target if isinstance(target, list) else [s for s in str(target or "").split(",")]
+        opts = target
+        if isinstance(opts, str) and opts.strip().startswith("["):     # a JSON list from a value input
+            try:
+                opts = json.loads(opts)
+            except ValueError:
+                pass
+        if not isinstance(opts, list):
+            opts = str(target or "").split(",")
         return v is not None and norm(v) in {norm(o) for o in opts}
     if op == "contains":
         if isinstance(v, list):
@@ -288,6 +296,13 @@ def describe_rule(rule: dict | None) -> str:
 # ---------------------------------------------------------------- value inputs
 
 _PLACEHOLDER = re.compile(r"\{\{\s*([^{}\n]+?)\s*\}\}")
+
+
+def name_key(name: Any) -> str:
+    """A flow or file input name as callers may write it: case, spacing and punctuation do not matter.
+    Letters and digits of every script count, so names in other alphabets stay distinct."""
+    s = unicodedata.normalize("NFKC", str(name or "")).lower()
+    return " ".join(re.sub(r"[^\w]|_", " ", s).split())
 
 
 def value_key(name: Any) -> str:
@@ -330,6 +345,8 @@ def value_uses(graph: dict) -> list[tuple[str, str, str | None, str | None]]:
         for text in (d.get("system"), d.get("instructions")):
             out += [(value_key(p), p, n["id"], None) for p in placeholders(text)]
     for e in graph.get("edges", []):
+        if (e.get("data") or {}).get("instruction") != "filter":
+            continue          # a rule left behind on a connection that is no longer a filter is not used
         for text in _rule_texts((e.get("data") or {}).get("rule")):
             out += [(value_key(p), p, e["target"], e["id"]) for p in placeholders(text)]
     return out
@@ -342,13 +359,24 @@ def coerce_value(inp: dict, raw: Any, max_chars: int = 20000) -> Any:
     if t == "number":
         if isinstance(raw, bool):
             raise bad
-        if isinstance(raw, (int, float)):
-            v = float(raw)
-        else:
-            try:
-                v = float(str(raw).strip().replace(",", ""))
-            except ValueError:
-                raise bad from None
+        try:
+            if isinstance(raw, (int, float)):
+                v = float(raw)
+            else:
+                s = str(raw).strip()
+                if "," in s:
+                    # Commas are accepted only as thousands separators (1,250 or 1,250.5). "1,5" could mean
+                    # one and a half, so it is refused and not read as fifteen.
+                    if not re.fullmatch(r"[-+]?\d{1,3}(,\d{3})+(\.\d+)?", s):
+                        raise ValueError(f'Input "{name}" must be a number written with a decimal point, such as 1.5.')
+                    s = s.replace(",", "")
+                v = float(s)
+        except OverflowError:
+            raise bad from None
+        except ValueError as e:
+            if "decimal point" in str(e):
+                raise
+            raise bad from None
         if not math.isfinite(v):
             raise bad
         return int(v) if v == int(v) else v
@@ -505,9 +533,9 @@ def validate(graph: dict, models: list[str]) -> list[dict]:
     if len(sources) > 1:
         seen_titles: dict[str, str] = {}
         for n in sources:
-            t = node_title(n).lower()
-            if not str((n.get("data") or {}).get("title") or "").strip():
-                out.append(problem("Each source needs a name when a flow has several.", n["id"]))
+            t = name_key(node_title(n))        # as the public endpoint matches them
+            if not str((n.get("data") or {}).get("title") or "").strip() or not t:
+                out.append(problem("Each source needs a name with letters or digits when a flow has several.", n["id"]))
             elif t in seen_titles:
                 out.append(problem(f"Two sources are both named {node_title(n)}. Give each its own name.", n["id"]))
             seen_titles[t] = n["id"]
@@ -528,6 +556,9 @@ def validate(graph: dict, models: list[str]) -> list[dict]:
                 out.append(problem(f"{title} is a source and cannot receive a connection.", n["id"]))
             if not outgoing(graph, n["id"]):
                 out.append(problem(f"{title} is not connected to a step.", n["id"]))
+            continue
+        if n["type"] not in ("step", "output"):
+            out.append(problem(f"{title} is a kind of block this version does not know ({n['type']}). Remove it.", n["id"]))
             continue
         refs = [e for e in inc if is_reference(e)]
         mats = [e for e in inc if not is_reference(e)]
@@ -557,6 +588,10 @@ def validate(graph: dict, models: list[str]) -> list[dict]:
                 out.append(problem(f"{title} cannot use an output block as a reference.", n["id"], r["id"]))
         e = mats[0]
         src = nodes[e["source"]]
+        if src["type"] == "output":
+            out.append(problem(f"{title} is fed by an output block. Connect it to the step before that output.",
+                               n["id"], e["id"]))
+            continue
 
         # step
         d = step_data(n)

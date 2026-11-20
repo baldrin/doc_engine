@@ -222,11 +222,11 @@ function SchemaEditor({ fields, onChange, cfg }: { fields: Field[]; onChange: (f
           </div>
           <input className="input" aria-label="Description" placeholder="What this field holds" value={f.description || ""} onChange={(e) => set(i, { description: e.target.value })} />
           {f.type === "enum" ? (
-            <input className="input" aria-label="Allowed values" placeholder="Allowed values, comma separated" defaultValue={(f.values || []).join(", ")}
+            <input className="input" aria-label="Allowed values" placeholder="Allowed values, comma separated" key={`v:${(f.values || []).join(",")}`} defaultValue={(f.values || []).join(", ")}
               onBlur={(e) => set(i, { values: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} />
           ) : null}
           {f.type === "table" ? (
-            <input className="input" aria-label="Columns" placeholder="Columns, comma separated" defaultValue={(f.columns || []).join(", ")}
+            <input className="input" aria-label="Columns" placeholder="Columns, comma separated" key={`c:${(f.columns || []).join(",")}`} defaultValue={(f.columns || []).join(", ")}
               onBlur={(e) => set(i, { columns: e.target.value.split(",").map((s) => s.trim().replace(/\s+/g, "_")).filter(Boolean) })} />
           ) : null}
         </div>
@@ -567,6 +567,8 @@ function BuilderInner({ flowId }: { flowId: string }) {
   const [saved, setSaved] = useState<"saved" | "saving" | "error">("saved");
   const [ready, setReady] = useState(false);
   const skip = useRef({ save: true, dirty: true });
+  const pendingSave = useRef<((keepalive?: boolean) => void) | null>(null);
+  const [canvasKeys, setCanvasKeys] = useState(true);
   const titleRef = useRef<HTMLInputElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -661,12 +663,39 @@ function BuilderInner({ flowId }: { flowId: string }) {
     if (!ready || !flow) return;
     if (skip.current.save) { skip.current.save = false; return; }
     setSaved("saving");
-    const t = setTimeout(() => {
-      api(`/api/flows/${flowId}`, { method: "PUT", json: { name, graph } }).then(() => setSaved("saved")).catch(() => setSaved("error"));
-    }, 700);
-    return () => clearTimeout(t);
+    let again: number | undefined;
+    const save = (keepalive = false): void => {
+      pendingSave.current = null;
+      api(`/api/flows/${flowId}`, { method: "PUT", json: { name, graph }, keepalive }).then(() => setSaved("saved"))
+        .catch(() => {
+          // Not saved: say so, and keep trying while this is still the latest edit.
+          setSaved("error");
+          if (!keepalive) { pendingSave.current = save; again = window.setTimeout(() => save(), 5000); }
+        });
+    };
+    pendingSave.current = save;
+    const t = window.setTimeout(() => save(), 700);
+    return () => { clearTimeout(t); clearTimeout(again); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [graphKey, posKey, name, ready]);
+  // An edit made just before leaving the builder, or closing the tab, is saved on the way out.
+  useEffect(() => {
+    const flush = () => { const s = pendingSave.current; if (s) s(true); };
+    window.addEventListener("pagehide", flush);
+    return () => { window.removeEventListener("pagehide", flush); flush(); };
+  }, []);
+  // Backspace and Delete remove the selected block only while the canvas has the focus, not from a button
+  // or a tab in the panel beside it.
+  useEffect(() => {
+    const check = () => {
+      const a = document.activeElement;
+      setCanvasKeys(!a || a === document.body || !!wrapRef.current?.contains(a));
+    };
+    const later = () => window.setTimeout(check, 0);
+    document.addEventListener("focusin", check);
+    document.addEventListener("mousedown", later);
+    return () => { document.removeEventListener("focusin", check); document.removeEventListener("mousedown", later); };
+  }, []);
   useEffect(() => {
     if (!ready) return;
     if (skip.current.dirty) { skip.current.dirty = false; return; }
@@ -907,7 +936,7 @@ function BuilderInner({ flowId }: { flowId: string }) {
                 onEdgeContextMenu={(e, ed) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, id: ed.id, edge: true }); }}
                 onNodeDoubleClick={(_, n) => { select(n.id); setTab("Prompt"); }}
                 onPaneClick={() => setMenu(null)}
-                deleteKeyCode={["Backspace", "Delete"]} minZoom={0.3} maxZoom={1.6} snapToGrid snapGrid={[10, 10]}
+                deleteKeyCode={canvasKeys ? ["Backspace", "Delete"] : null} minZoom={0.3} maxZoom={1.6} snapToGrid snapGrid={[10, 10]}
                 proOptions={{ hideAttribution: true }} defaultEdgeOptions={{ type: "flow" }}>
                 <Background variant={BackgroundVariant.Dots} gap={20} size={1.4} color="var(--dots)" />
                 <MiniMap pannable zoomable style={{ width: 132, height: 78, border: "1px solid var(--line-2)", borderRadius: 6, background: "var(--surface-2)" }}
@@ -955,7 +984,7 @@ function BuilderInner({ flowId }: { flowId: string }) {
 
           <aside className="props" aria-label="Properties">
             {focusNode?.type === "step" ? (
-              <StepPanel node={focusNode} inEdge={inEdge} upstream={upstream} refs={refs} setRole={setRole} removeEdge={(id) => remove(id, true)} cfg={cfg} tab={tab} setTab={setTab} estimate={estimate} titleRef={titleRef} inputs={inputs} onManageInputs={deselect} onViewOutputs={() => setDialog({ kind: "outputs", id: focusNode.id })}
+              <StepPanel key={focusNode.id} node={focusNode} inEdge={inEdge} upstream={upstream} refs={refs} setRole={setRole} removeEdge={(id) => remove(id, true)} cfg={cfg} tab={tab} setTab={setTab} estimate={estimate} titleRef={titleRef} inputs={inputs} onManageInputs={deselect} onViewOutputs={() => setDialog({ kind: "outputs", id: focusNode.id })}
                 update={(p) => updateNode(focusNode.id, p)} updateEdge={(p) => inEdge && updateEdge(inEdge.id, p)}
                 onTest={() => setDialog({ kind: "run", only: focusNode.id })}
                 onDone={() => { setNodes((ns) => ns.map((n) => ({ ...n, selected: false }))); setEdges((es) => es.map((e) => ({ ...e, selected: false }))); }} />

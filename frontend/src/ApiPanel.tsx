@@ -12,7 +12,8 @@ const TYPE: Record<string, string> = { text: "Text", number: "Number", choice: "
 
 /** The flow's name as it can be written in an address: "Contract file review" -> contract-file-review. */
 export function flowSlug(name: string): string {
-  return name.toLowerCase().replace(/[^0-9a-z]+/g, "-").replace(/^-+|-+$/g, "");
+  // As the server matches names: letters and digits of any script, everything else a separator.
+  return name.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
 }
 const fileName = (input: string) => (flowSlug(input) || "file") + ".pdf";
 const example = (v: Contract["values"][number]): unknown =>
@@ -55,7 +56,7 @@ export default function ApiPanel({ flow, dirty, onClose, onUnpublished }: {
     body = <p className="hint">This flow is not published, so it cannot be run from code yet. Choose <strong>Publish</strong> in the
       top bar. Publishing makes the flow as it is now available under its name.</p>;
   } else {
-    const url = `${origin}/api/v1/flows/${flowSlug(c.name)}/jobs`;
+    const url = `${origin}/api/v1/flows/${encodeURI(flowSlug(c.name)) || c.flow_id}/jobs`;
     const vals = Object.fromEntries(c.values.map((v) => [v.name, example(v)]));
     const submit = [`curl -X POST ${sh(url)}`,
       ...c.files.map((f) => `  -F ${sh(`${c.files.length === 1 ? "file" : f.name}=@${fileName(f.name)}`)}`),

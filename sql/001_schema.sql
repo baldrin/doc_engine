@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS flow_versions (
     created_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (flow_id, version)
 );
+-- The description as it was when the version was saved, so callers see the published one, not the draft.
+ALTER TABLE flow_versions ADD COLUMN IF NOT EXISTS description text;
 
 CREATE TABLE IF NOT EXISTS documents (
     document_id text PRIMARY KEY,
@@ -481,6 +483,7 @@ DECLARE
     new_round boolean;
     streak int;
     pause double precision;
+    drained double precision;
 BEGIN
     SELECT * INTO r FROM reservations WHERE reservation_id = p_reservation_id FOR UPDATE;
     IF NOT FOUND OR r.released_at IS NOT NULL THEN
@@ -502,11 +505,17 @@ BEGIN
         ELSIF p_outcome = 'ok' AND new_round THEN
             streak := 0;
         END IF;
-        pause := least(greatest(q.hold_max_s, q.hold_s), q.hold_s * power(2, greatest(streak - 1, 0)));
+        streak := least(streak, 1000);
+        pause := least(greatest(q.hold_max_s, q.hold_s), q.hold_s * power(2, least(greatest(streak - 1, 0), 30)));
+        -- The estimate was added when the call was admitted and has been draining since. Only what is left of
+        -- it is still in the level, so only that much is taken out, and the actual figure goes in less the
+        -- same drain. Taking the whole estimate out would remove input that later calls added.
+        drained := greatest(0, extract(epoch FROM now_db - r.admitted_at)) * greatest(q.itpm, 1) / 60.0;
         UPDATE quota SET
             hold_streak = streak,
             out_level = greatest(0, q.out_level - dt * greatest(q.otpm, 1) / 60.0) + v_out,
-            in_level = greatest(0, greatest(0, q.in_level - dt * greatest(q.itpm, 1) / 60.0) + v_in - r.counted_input),
+            in_level = greatest(0, greatest(0, q.in_level - dt * greatest(q.itpm, 1) / 60.0)
+                                   + greatest(0, v_in - drained) - greatest(0, r.counted_input - drained)),
             updated_at = now_db,
             rejections = rejections + CASE WHEN p_outcome = '429' THEN 1 ELSE 0 END,
             hold_until = CASE WHEN p_outcome = '429'
@@ -524,6 +533,8 @@ $$;
 -- The lost call may still complete and be charged at the gateway, so its expected output is kept in the level.
 -- A call returned more than p_max_recoveries times is not queued again: it is set to 'lost', which no admission
 -- picks up, and the worker then fails its job. 0 means no limit.
+-- A call whose job has already ended (cancelled or failed) is not queued again either: it is set to 'cancelled'.
+-- A warm-up is the exception, because calls of other jobs may be waiting for it; the worker ends it.
 DROP FUNCTION IF EXISTS de_reap(double precision);
 CREATE OR REPLACE FUNCTION de_reap(p_dead_after_s double precision, p_max_recoveries int DEFAULT 0)
 RETURNS int LANGUAGE plpgsql AS $$
@@ -533,20 +544,25 @@ DECLARE
     r reservations%ROWTYPE;
 BEGIN
     FOR t IN
-        SELECT tk.task_id, tk.job_id, tk.node_id, tk.model, tk.reservation_id, tk.lease_owner, tk.recoveries
+        SELECT tk.task_id, tk.job_id, tk.node_id, tk.model, tk.reservation_id, tk.lease_owner, tk.recoveries,
+               (tk.kind <> 'warmup' AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.job_id = tk.job_id
+                                                    AND j.state IN ('queued', 'running'))) AS job_ended
         FROM tasks tk LEFT JOIN workers w ON w.worker_id = tk.lease_owner
         WHERE tk.state = 'running'
           AND (tk.lease_expires_at < clock_timestamp()
                OR w.worker_id IS NULL
                OR w.heartbeat_at < clock_timestamp() - make_interval(secs => p_dead_after_s))
+        ORDER BY tk.model, tk.task_id      -- quota rows are locked in model order, as admission does
         FOR UPDATE OF tk SKIP LOCKED
     LOOP
         IF t.reservation_id IS NOT NULL THEN
             SELECT * INTO r FROM reservations WHERE reservation_id = t.reservation_id;
             PERFORM de_release(t.reservation_id, 'expired', r.counted_output, r.counted_input);
         END IF;
-        UPDATE tasks SET state = CASE WHEN p_max_recoveries > 0 AND t.recoveries + 1 > p_max_recoveries
-                                      THEN 'lost' ELSE 'ready' END,
+        UPDATE tasks SET state = CASE WHEN t.job_ended THEN 'cancelled'
+                                      WHEN p_max_recoveries > 0 AND t.recoveries + 1 > p_max_recoveries THEN 'lost'
+                                      ELSE 'ready' END,
+                finished_at = CASE WHEN t.job_ended THEN clock_timestamp() ELSE finished_at END,
                 lease_owner = NULL, lease_expires_at = NULL, reservation_id = NULL, recoveries = recoveries + 1
             WHERE task_id = t.task_id;
         INSERT INTO events (kind, job_id, node_id, task_id, model, data)

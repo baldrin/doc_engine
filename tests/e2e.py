@@ -218,8 +218,8 @@ def main() -> int:
         check(r.returncode == 0 and "per job" in r.stdout, "`load --dry-run` prints an estimate", r.stdout + r.stderr[-300:])
 
         # ---------------------------------------------------------------- start the gateway and the application
-        gw = start([PY, "-m", "fake_gateway", "--port", str(gw_port), "--speed", str(args.speed),
-                    "--otpm", str(100000 * scale), "--itpm", str(1000000 * scale), "--bucket", str(40000 * scale)],
+        scaled = ["--otpm", str(100000 * scale), "--itpm", str(1000000 * scale), "--bucket", str(40000 * scale)]
+        gw = start([PY, "-m", "fake_gateway", "--port", str(gw_port), "--speed", str(args.speed)] + scaled,
                    env, tmp / "gateway.log")
         app_proc = start([PY, "-m", "doc_engine", "serve"], env, tmp / "app.log")
         base = f"http://127.0.0.1:{app_port}"
@@ -258,7 +258,9 @@ def main() -> int:
             ids = a.submit(fid)
             job = a.wait_jobs(ids)[0]
             outs = a.http.get(f"/api/jobs/{ids[0]}/outputs").json()
-            n_out = len(outs.get("outputs", outs) if isinstance(outs, dict) else outs)
+            blocks = outs.get("outputs", []) if isinstance(outs, dict) else outs
+            # an output counts only when it holds something: text, or rows of a table
+            n_out = sum(1 for o in blocks if any((it.get("text") or it.get("data")) for it in o.get("items", [])))
             check(job["state"] == "done" and job["rejections"] == 0 and a.steps_exact(ids) and n_out > 0,
                   f"{name}: done, no rejections, every step complete, has outputs",
                   f"state {job['state']}, error {job.get('error')}, rejections {job['rejections']}, outputs {n_out}")
@@ -300,8 +302,23 @@ def main() -> int:
         fin = {j["priority"]: [] for j in jobs}
         for j in jobs:
             fin[j["priority"]].append(j["finished_at"])
-        if all(j["finished_at"] for j in jobs):
-            check(max(fin["interactive"]) <= max(fin["bulk"]), "interactive jobs finished before the last bulk job")
+        # Priority, not submission order: bulk jobs go in first, an interactive job after them. Its calls must
+        # be sent ahead of the bulk calls that were still waiting when it arrived.
+        a.sql("DELETE FROM cache_warm RETURNING 1")
+        bulk_ids = a.submit("flow_sample_contract", count=0, bulk=6)
+        time.sleep(0.4)
+        inter = a.submit("flow_sample_contract", count=1, bulk=0)
+        a.wait_jobs(bulk_ids + inter, 300)
+        jumped = a.sql(
+            """SELECT count(*) FROM calls c JOIN tasks t USING (task_id)
+               WHERE t.job_id = ANY(%s) AND t.kind = 'call' AND c.outcome = 'ok'
+                 AND c.sent_at > (SELECT max(c2.sent_at) FROM calls c2 JOIN tasks t2 USING (task_id)
+                                  WHERE t2.job_id = %s AND t2.kind = 'call' AND t2.node_id = t.node_id)
+                 AND t.created_at < (SELECT submitted_at FROM jobs WHERE job_id = %s)""", bulk_ids, inter[0], inter[0])[0][0]
+        states = [j["state"] for j in a.wait_jobs(bulk_ids + inter, 5)]
+        check(all(s == "done" for s in states) and jumped > 0,
+              "an interactive job submitted after bulk jobs has its calls sent ahead of bulk calls already waiting",
+              f"states {states}; bulk calls that were waiting and went after it: {jumped}")
 
         # ---------------------------------------------------------------- refusals leave nothing behind
         print("refusals")
@@ -324,7 +341,7 @@ def main() -> int:
         a.http.post(f"/api/jobs/{ids[0]}/cancel").raise_for_status()
         job = a.wait_jobs(ids, 30)[0]
         time.sleep(1.5)
-        left = a.sql("SELECT count(*) FROM tasks WHERE job_id = %s AND state IN ('queued','running')", ids[0])[0][0]
+        left = a.sql("SELECT count(*) FROM tasks WHERE job_id = %s AND state IN ('waiting','ready','running','lost')", ids[0])[0][0]
         check(job["state"] == "cancelled" and left == 0, "a cancelled job stops and leaves no waiting calls",
               f"state {job['state']}, tasks left {left}")
 
@@ -342,12 +359,14 @@ def main() -> int:
         if ok:
             jid = r.json()["job_id"]
             early = a.http.get(f"/api/v1/jobs/{jid}/results")
+            early_state = a.http.get(f"/api/v1/jobs/{jid}").json().get("status")
             a.wait_jobs([jid])
             st = a.http.get(f"/api/v1/jobs/{jid}").json()
             res = a.http.get(f"/api/v1/jobs/{jid}/results")
             check(st["status"] == "done" and res.status_code == 200 and res.json()["outputs"],
                   "status ends at done and results are returned", f"{st.get('status')} {res.status_code}")
-            check(early.status_code in (409, 200), "results asked for early answer 409 until the job is done", str(early.status_code))
+            check(early.status_code == 409 or early_state == "done",
+                  "results asked for early answer 409 until the job is done", f"{early.status_code}, job then {early_state}")
         before = a.sql("SELECT count(*) FROM jobs")[0][0]
         r = a.http.post(f"/api/v1/flows/{slug}/jobs", json={"files": {"Purchase order": "doc_sample_trade_po"}})
         check(400 <= r.status_code < 500 and a.sql("SELECT count(*) FROM jobs")[0][0] == before,
@@ -358,12 +377,23 @@ def main() -> int:
 
         # ---------------------------------------------------------------- a worker that dies mid-run
         print("a worker killed mid-run")
+        main_workers = [w[0] for w in a.sql("SELECT worker_id FROM workers")]
         extra = start([PY, "-m", "doc_engine", "worker"], env, tmp / "worker.log")
         time.sleep(3)
         ids = a.submit("flow_sample_medical", count=2, bulk=0, confirm_saturation=True)
-        time.sleep(1.2)
+        extra_id = None
+        for _ in range(200):      # kill it only once it is sending a call of these jobs
+            row = a.sql("SELECT lease_owner FROM tasks WHERE job_id = ANY(%s) AND state = 'running' AND lease_owner <> ALL(%s) "
+                        "LIMIT 1", ids, [w for w in main_workers])
+            if row:
+                extra_id = row[0][0]
+                break
+            time.sleep(0.05)
         stop(extra, hard=True)
         jobs = a.wait_jobs(ids, 300)
+        recovered = a.sql("SELECT count(*) FROM events WHERE kind = 'task_recovered' AND job_id = ANY(%s)", ids)[0][0]
+        check(extra_id is not None and recovered > 0, "the killed worker was sending calls, and they were returned to the queue",
+              f"worker {extra_id}, calls returned {recovered}")
         check(all(j["state"] == "done" for j in jobs), "both jobs finish after a worker is killed",
               str([(j["state"], j.get("error")) for j in jobs]))
         check(a.steps_exact(ids), "no call was lost or counted twice")
@@ -396,6 +426,19 @@ def main() -> int:
         used = a.sql("SELECT cap_used FROM quota WHERE model = 'sonnet'")[0][0]
         check(used is not None and abs(q["sonnet"]["out_capacity"] - used) < 1,
               "the quota panel reports the cap admission used", f"{q['sonnet']['out_capacity']} vs {used}")
+
+        # ---------------------------------------------------------------- replies that go wrong part-way
+        print("streamed replies that fail part-way")
+        stop(gw)
+        gw = start([PY, "-m", "fake_gateway", "--port", str(gw_port), "--speed", str(args.speed),
+                    "--stream-faults", "2"] + scaled, env, tmp / "gateway-faults.log")
+        wait_http(f"http://127.0.0.1:{gw_port}/")
+        ids = a.submit("flow_sample_contract")
+        job = a.wait_jobs(ids, 300)[0]
+        retried = a.sql("SELECT count(*) FROM calls WHERE job_id = %s AND outcome = 'transient'", ids[0])[0][0]
+        check(job["state"] == "done" and retried == 2 and a.steps_exact(ids),
+              "a reply that breaks off or reports an error part-way is sent again, and the job finishes",
+              f"state {job['state']}, error {job.get('error')}, calls sent again {retried}")
 
         # ---------------------------------------------------------------- a gateway far smaller than the settings say
         print("rejections (a gateway with a much smaller quota than configured)")

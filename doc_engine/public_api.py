@@ -18,7 +18,6 @@ it did not already hold. There are no callbacks; callers poll the status address
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Awaitable, Callable
 
 from fastapi import FastAPI, Request
@@ -32,11 +31,12 @@ from .documents import MAX_FILE_BYTES, FileTooLarge, read_body, read_part
 from .documents import store_document
 
 ACTIVE = ("queued", "running")
+MAX_JSON_BYTES = 2 * 1024 * 1024
 
 
 def flow_key(name: Any) -> str:
     """A flow's name as callers may write it: case, spacing and punctuation do not matter."""
-    return " ".join(re.sub(r"[^0-9a-z]+", " ", str(name or "").lower()).split())
+    return flows.name_key(name)
 
 
 class ApiError(Exception):
@@ -81,7 +81,8 @@ def register(app: FastAPI, db: Db, cfg: Section, nudge: Callable[[], None],
         # The name callers use is the name the flow had when it was published. Renaming the draft changes
         # nothing for callers until the flow is published again.
         rows = await db.fetch(
-            """SELECT f.flow_id, v.name, f.description, f.version, f.published_version FROM flows f
+            """SELECT f.flow_id, v.name, coalesce(v.description, f.description) AS description, f.version,
+                      f.published_version FROM flows f
                JOIN flow_versions v ON v.flow_id = f.flow_id AND v.version = f.published_version
                WHERE f.published_version IS NOT NULL""")
         hit = [r for r in rows if r["flow_id"] == ref] or [r for r in rows if flow_key(r["name"]) == flow_key(ref)]
@@ -106,7 +107,8 @@ def register(app: FastAPI, db: Db, cfg: Section, nudge: Callable[[], None],
     @app.get("/api/v1/flows")
     async def v1_flows(request: Request) -> Response:
         rows = await db.fetch(
-            """SELECT f.flow_id, v.name, f.description, f.published_version, v.graph FROM flows f
+            """SELECT f.flow_id, v.name, coalesce(v.description, f.description) AS description, f.published_version,
+                      v.graph FROM flows f
                JOIN flow_versions v ON v.flow_id = f.flow_id AND v.version = f.published_version
                WHERE f.published_version IS NOT NULL ORDER BY lower(v.name)""")
         return J({"flows": [contract(r, r["graph"], base_url(request)) for r in rows]})
@@ -123,6 +125,7 @@ def register(app: FastAPI, db: Db, cfg: Section, nudge: Callable[[], None],
         """The file as the request body (with ?name=), or as one multipart part named `file`."""
         ctype = request.headers.get("content-type", "")
         if ctype.startswith("multipart/form-data"):
+            _form_size(request, 1)
             form = await request.form()
             part = form.get("file")
             if not isinstance(part, UploadFile):
@@ -134,6 +137,15 @@ def register(app: FastAPI, db: Db, cfg: Section, nudge: Callable[[], None],
         if not name:
             raise ApiError(400, "invalid_request", "Give the file a name: add ?name=report.pdf to the address.")
         return J(_file(await _store(name, data)), 201)
+
+    def _form_size(request: Request, files: int) -> None:
+        """Refuses a form upload by its declared length, before any of it is read or written to disk."""
+        declared = request.headers.get("content-length", "")
+        if not declared.isdigit():
+            raise ApiError(411, "length_required", "Send a Content-Length header with a form upload.")
+        if int(declared) > max(1, files) * MAX_FILE_BYTES + 4 * 1024 * 1024:
+            raise ApiError(413, "file_too_large", "The request is larger than the files of this flow may be "
+                                                  "(200 MB each).")
 
     async def _limited(reading: Awaitable[bytes]) -> bytes:
         try:
@@ -187,6 +199,7 @@ def register(app: FastAPI, db: Db, cfg: Section, nudge: Callable[[], None],
             values.update(raw)
 
         if ctype.startswith("multipart/form-data"):
+            _form_size(request, len(srcs))
             form = await request.form()
             for field, v in form.multi_items():
                 src = source_for(field)
@@ -208,7 +221,9 @@ def register(app: FastAPI, db: Db, cfg: Section, nudge: Callable[[], None],
                     raise bad(f'Unknown field "{field}".')
         else:
             try:
-                body = await request.json()
+                body = json.loads(await read_body(request, "The request", MAX_JSON_BYTES))
+            except FileTooLarge:
+                raise ApiError(413, "request_too_large", "The JSON body is larger than 2 MB. Send long content as a file.") from None
             except ValueError:
                 raise bad("Send multipart/form-data with the files, or a JSON body with file ids.") from None
             if not isinstance(body, dict):
@@ -253,7 +268,8 @@ def register(app: FastAPI, db: Db, cfg: Section, nudge: Callable[[], None],
             documents = await planner.resolve_documents(db, graph, file_ids)
             job_id = await planner.submit_job(
                 db, cfg, graph=graph, flow_id=f["flow_id"], flow_name=f["name"], flow_version=f["published_version"],
-                documents=documents, priority=priority, label=(opts.get("label") or "API")[:200], values=resolved)
+                documents=documents, priority=priority, label=(opts.get("label") or "API")[:200], values=resolved,
+                values_resolved=True)
         except Exception as e:
             for fid in stored:      # nothing ran on them: do not keep what the refused request brought
                 await db.execute("DELETE FROM documents WHERE document_id = %s AND NOT is_sample", (fid,))

@@ -90,7 +90,11 @@ function Rendered({ text, c }: { text: string; c: CiteCtx }) {
 }
 
 function csv(table: { columns: string[]; rows: Record<string, any>[] }): string {
-  const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  // A cell that a spreadsheet would read as a formula gets a leading apostrophe, so it stays text.
+  const esc = (v: any) => {
+    const s = String(v ?? "");
+    return `"${(/^[=+\-@\t\r]/.test(s) && !/^-?\d+([.,]\d+)?$/.test(s) ? "'" + s : s).replace(/"/g, '""')}"`;
+  };
   return [table.columns.map(esc).join(","), ...table.rows.map((r) => table.columns.map((c) => esc(r[c])).join(","))].join("\n");
 }
 
@@ -111,9 +115,13 @@ export default function Results({ jobId }: { jobId: string }) {
   const shownDoc = page ? inputs.find((i) => i.input === page.input) || inputs[0] : undefined;
   // A table's page cell: "2", "1-3", or with several documents "Invoice 2".
   const cellRef = (v: string): Ref | null => {
-    const m = String(v).match(/^(.*?)\s*(\d[\d,\s\-–]*)$/);
-    const p = m ? firstPage(m[2]) : null;
-    const inp = m ? inputs.find((i) => i.input === m[1].trim()) || inputs[0] : undefined;
+    const s = String(v).trim();
+    // The input's name first, longest first: a name may itself end in a number ("File 2 3" is page 3 of File 2).
+    const named = [...inputs].sort((a, b) => b.input.length - a.input.length).find((i) => s.startsWith(i.input + " "));
+    const rest = named ? s.slice(named.input.length).trim() : s;
+    if (!/^\d[\d,\s\-–]*$/.test(rest)) return null;
+    const p = firstPage(rest);
+    const inp = named || inputs[0];
     return p != null && inp ? { input: inp.input, page: p } : null;
   };
   const download = (name: string, body: string, type: string) => {

@@ -91,6 +91,12 @@ def validate(cfg: Section) -> list[str]:
         v = cfg[sec].get(name)
         if v is not None and str(v).lower() not in allowed:
             out.append(f"{where} is {v!r}; it must be " + " or ".join(allowed))
+    try:
+        margin = float(cfg.ledger.get("safety_margin_fraction", 0.05))
+        if not 0 <= margin < 1:
+            out.append(f"ledger.safety_margin_fraction is {margin}; it must be 0 or more and below 1")
+    except (TypeError, ValueError):
+        out.append("ledger.safety_margin_fraction must be a number")
     if float(cfg.ledger.get("lease_s", 900)) <= float(cfg.gateway.get("request_timeout_s", 600)):
         out.append("ledger.lease_s must exceed gateway.request_timeout_s")
     if int(cfg.gateway.get("max_connections", 512)) <= int(cfg.worker.get("concurrency", 128)):
@@ -113,12 +119,18 @@ def placeholders(cfg: Section) -> list[str]:
 def databricks_oauth_token() -> str:
     """The app's own OAuth token (its service principal) on Databricks Apps. Refreshed by the SDK.
     Not exercised outside Databricks: confirm in the first deployment."""
-    from databricks.sdk import WorkspaceClient  # available in the Databricks Apps runtime
-    return WorkspaceClient().config.oauth_token().access_token
+    global _workspace
+    if _workspace is None:
+        from databricks.sdk import WorkspaceClient  # available in the Databricks Apps runtime
+        _workspace = WorkspaceClient()     # kept: the SDK reuses a token until it is close to expiry
+    return _workspace.config.oauth_token().access_token
+
+
+_workspace: Any = None
 
 
 def gateway_token(cfg: Section) -> str:
-    if cfg.gateway.get("token_source", "env") == "databricks_oauth":
+    if str(cfg.gateway.get("token_source", "env")).lower() == "databricks_oauth":
         return databricks_oauth_token()
     name = cfg.gateway.get("token_env_var", "DATABRICKS_TOKEN")
     tok = os.environ.get(name, "")
@@ -128,7 +140,7 @@ def gateway_token(cfg: Section) -> str:
 
 
 def postgres_password(cfg: Section) -> str | None:
-    if cfg.postgres.get("password_source", "env") == "databricks_oauth":
+    if str(cfg.postgres.get("password_source", "env")).lower() == "databricks_oauth":
         return databricks_oauth_token()
     cmd = cfg.postgres.get("password_command") or ""
     if cmd:

@@ -354,3 +354,64 @@ def test_meaning_ignores_layout_only():
     assert flows.meaning(a) == flows.meaning(b)
     b["nodes"][0]["data"]["title"] = "Summarize"
     assert flows.meaning(a) != flows.meaning(b)
+
+
+def test_review_fixes_values_and_names():
+    num = {"name": "Tolerance", "type": "number", "choices": [], "default": None}
+    assert flows.coerce_value(num, "1,250") == 1250 and flows.coerce_value(num, "1,250.5") == 1250.5
+    assert flows.coerce_value(num, "1.5") == 1.5
+    for bad in ("1,5", "12,34", 10 ** 400, "1e999"):
+        with pytest.raises(ValueError):
+            flows.coerce_value(num, bad)
+    # a list from a JSON value input, written into an "in" rule
+    assert flows.rule_matches({"field": "t", "op": "in", "value": '["lab report", "invoice"]'}, {"t": "Invoice"})
+    assert flows.rule_matches({"field": "t", "op": "in", "value": "lab report,invoice"}, {"t": "invoice"})
+    # names in other scripts stay distinct; punctuation and case still do not matter
+    k = flows.name_key
+    assert k("Rechnung prüfen") != k("Rechnung prfen") and k("契約書") != k("請求書") and k("契約書") != ""
+    assert k("File-2") == k("file 2") == k("FILE_2")
+    # a rule left on a connection that is no longer a filter asks for no value
+    g = {"nodes": [{"id": "a", "type": "step", "data": {}}], "inputs": [],
+         "edges": [{"id": "e", "source": "s", "target": "a", "data": {"instruction": "map", "rule": {"value": "{{Old}}"}}}]}
+    assert flows.value_uses(g) == []
+    g["edges"][0]["data"]["instruction"] = "filter"
+    assert [u[0] for u in flows.value_uses(g)] == ["old"]
+    assert flows.step_data({"data": {"max_tokens": float("inf")}})["max_tokens"] == 0
+
+
+def test_review_fixes_validation():
+    g = contract_flow()
+    out = next(n for n in g["nodes"] if n["type"] == "output")
+    step = next(n for n in g["nodes"] if n["type"] == "step")
+    edge = next(e for e in g["edges"] if e["target"] == step["id"] and (e.get("data") or {}).get("role") != "reference")
+    edge["source"] = out["id"]
+    assert any("fed by an output block" in p["message"] for p in flows.validate(g, ["haiku", "sonnet", "opus"]))
+    g = contract_flow()
+    g["nodes"].append({"id": "x", "type": "mystery", "data": {"title": "Odd"}})
+    assert any("does not know" in p["message"] for p in flows.validate(g, ["haiku", "sonnet", "opus"]))
+    g = three_way_flow()
+    srcs = [n for n in g["nodes"] if n["type"] == "source"]
+    srcs[0]["data"]["title"], srcs[1]["data"]["title"] = "Order (A)", "order a"
+    assert any("both named" in p["message"] for p in flows.validate(g, ["haiku", "sonnet", "opus"]))
+
+    from doc_engine.api import checked_graph
+    assert checked_graph({"nodes": [], "edges": []})["inputs"] == []
+    for bad in ([], {"nodes": {}}, {"nodes": [{"id": 1, "type": "step"}]}, {"nodes": [], "edges": [{"id": "e"}]}):
+        with pytest.raises(ValueError):
+            checked_graph(bad)
+
+
+def test_review_fixes_files_and_gateway():
+    from doc_engine import documents
+    from doc_engine.gateway import CallResult, _error_type
+    assert documents.detect_kind("notes.txt", b"A PDF file starts with %PDF-1.7 on its first line.\n") == "text"
+    assert documents.detect_kind("x.bin", b"%PDF-1.7\n...") == "pdf"
+    assert documents.detect_kind("odd.pdf", b"junk before\n%PDF-1.7\n...") == "pdf"
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("1", (9000, 9000)).save(buf, "PNG")          # small as a file, 81 million pixels once decoded
+    with pytest.raises(ValueError, match="too large"):
+        documents.prepare_image("huge.png", buf.getvalue())
+    assert _error_type({"type": "error", "error": {"type": "overloaded_error", "message": "x"}}) == "overloaded_error"
+    assert _error_type("text") == "" and _error_type({"error_code": "X"}) == ""
+    assert CallResult(stop_reason="model_context_window_exceeded").truncated

@@ -27,7 +27,7 @@ import psycopg
 
 from . import flows, planner, prompts
 from .config import Section
-from .db import Db, Jsonb
+from .db import DatabaseUnavailable, Db, Jsonb
 from .documents import DocumentCache
 from .gateway import CallResult, call_cost, execute_call, make_client
 
@@ -138,6 +138,7 @@ class Worker:
                     await planner.warm_lock(conn, task["model"], (task.get("payload") or {}).get("prefix_hash"))
                     await planner.release_gated(conn, cfg, task)
                 else:
+                    await planner.release_gated(conn, cfg, task)
                     title = flows.nodes_by_id(job["graph"]).get(task["node_id"], {}).get("data", {}).get("title") or task["node_id"]
                     await planner.fail_job(conn, task["job_id"], f"{title}: {err}")
             await self.db.tx(go)
@@ -224,6 +225,11 @@ class Worker:
         except asyncio.CancelledError:
             await asyncio.shield(self._return_to_queue(task, reservation_id, "cancelled"))
             raise
+        except DatabaseUnavailable as e:
+            # The database was away while the call was being prepared. That says nothing about the call:
+            # it goes back to the queue (by the reaper if this fails too) and the job carries on.
+            log.error("task %s: the database was not reachable (%s); returning it to the queue", tid, e)
+            await self._return_to_queue(task, reservation_id, "error")
         except Exception as e:
             log.exception("task %s failed inside the worker", tid)
             res = CallResult(outcome="permanent", error={"message": f"worker error: {type(e).__name__}: {e}"})
@@ -248,7 +254,7 @@ class Worker:
             try:
                 await self._record(task, reservation_id, res, parsed, thinking)
                 return
-            except (psycopg.OperationalError, psycopg.InterfaceError, OSError) as e:
+            except (DatabaseUnavailable, psycopg.OperationalError, psycopg.InterfaceError, OSError) as e:
                 if i == len(pauses):
                     log.error("task %s: could not record its reply (%s); returning it to the queue", task["task_id"], e)
                     await self._return_to_queue(task, reservation_id, "error")
@@ -394,8 +400,8 @@ class Worker:
             if not live:
                 await conn.execute("UPDATE tasks SET state = 'cancelled', lease_owner = NULL, finished_at = clock_timestamp() "
                                    "WHERE task_id = %s", (tid,))
-                if is_warmup:        # calls of other jobs may be waiting for this warm-up
-                    await planner.release_gated(conn, cfg, task)
+                # Calls of other jobs may be waiting for this warm-up, or for this call as the first of a wave.
+                await planner.release_gated(conn, cfg, task)
             elif res.outcome == "ok":
                 await conn.execute(
                     """UPDATE tasks SET state = 'done', lease_owner = NULL, lease_expires_at = NULL, output_text = %s,
@@ -460,6 +466,7 @@ class Worker:
                     # Caching is an optimization. The step's calls run without it.
                     await planner.release_gated(conn, cfg, task)
                 else:
+                    await planner.release_gated(conn, cfg, task)     # other jobs' calls held back behind this one
                     title = (job["graph"] and flows.nodes_by_id(job["graph"]).get(nid, {}).get("data", {}).get("title")) or nid
                     await planner.fail_job(conn, job_id, f"{title}: {err}")
 
@@ -477,9 +484,13 @@ class Worker:
 
     async def _return_to_queue(self, task: dict, reservation_id: int, outcome: str) -> None:
         async def go(conn: psycopg.AsyncConnection) -> None:
+            # A call whose job has already ended is not queued again. A warm-up is: calls of other jobs may be
+            # waiting for it, and recording its reply is what releases them.
             await conn.execute(
-                "UPDATE tasks SET state = 'ready', lease_owner = NULL, lease_expires_at = NULL, reservation_id = NULL "
-                "WHERE task_id = %s AND state = 'running' AND lease_owner = %s", (task["task_id"], self.worker_id))
+                "UPDATE tasks t SET state = CASE WHEN t.kind <> 'warmup' AND NOT EXISTS (SELECT 1 FROM jobs j "
+                "WHERE j.job_id = t.job_id AND j.state IN ('queued', 'running')) THEN 'cancelled' ELSE 'ready' END, "
+                "lease_owner = NULL, lease_expires_at = NULL, reservation_id = NULL "
+                "WHERE t.task_id = %s AND t.state = 'running' AND t.lease_owner = %s", (task["task_id"], self.worker_id))
             # The cancelled call may still complete at the gateway, so keep its expected output in the level.
             cur = await conn.execute("SELECT counted_output, counted_input FROM reservations WHERE reservation_id = %s",
                                      (reservation_id,))

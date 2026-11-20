@@ -61,6 +61,7 @@ class Bucket:
 class State:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
+        self.stream_faults = int(getattr(args, "stream_faults", 0) or 0)
         self.out: dict[str, Bucket] = {}
         self.inp: dict[str, Bucket] = {}
         self.cache: dict[str, tuple[float, float]] = {}   # hash -> (readable_at, expires_at)
@@ -335,6 +336,18 @@ def build_app(args: argparse.Namespace) -> FastAPI:
                 await asyncio.sleep(ttft)
                 start = dict(msg, content=[], stop_reason=None, usage=dict(usage, output_tokens=1))
                 yield ev("message_start", {"type": "message_start", "message": start})
+                if st.stream_faults > 0:
+                    # A reply that goes wrong part-way: by turns an error event inside the stream, and a stream
+                    # that simply ends with no closing events.
+                    st.stream_faults -= 1
+                    st.stats["stream_faults"] = st.stats.get("stream_faults", 0) + 1
+                    yield ev("content_block_start", {"type": "content_block_start", "index": 0,
+                                                     "content_block": {"type": "text", "text": ""}})
+                    yield ev("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                                     "delta": {"type": "text_delta", "text": "The first part of a reply"}})
+                    if st.stream_faults % 2 == 0:
+                        yield ev("error", {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}})
+                    return
                 for i, block in enumerate(content):
                     if block["type"] == "thinking":
                         yield ev("content_block_start", {"type": "content_block_start", "index": i,
@@ -382,6 +395,8 @@ def main() -> None:
     ap.add_argument("--cache-min-tokens", type=int, default=1024)
     ap.add_argument("--cache-ttl-s", type=float, default=300)
     ap.add_argument("--max-body-mb", type=float, default=20)
+    ap.add_argument("--stream-faults", type=int, default=0,
+                    help="make the first N streamed replies fail part-way (an error event, or a stream that just ends)")
     args = ap.parse_args()
     uvicorn.run(build_app(args), host=args.host, port=args.port, log_level="warning")
 

@@ -125,6 +125,8 @@ function apply(s: RState, ev: EngineEvent, titles: Record<string, string>): RSta
       say(`${title} · ${d.kind === "warmup" ? "warm-up failed, continuing without the cache" : d.error || "failed"}`, C.red);
       break;
     case "task_recovered":
+      out.inflight = Math.max(0, s.inflight - 1);
+      if (n) n.inflight = Math.max(0, n.inflight - 1);
       say(`${title} · a lost call was returned to the queue`, C.orange);
       break;
     case "step_done":
@@ -151,6 +153,14 @@ function apply(s: RState, ev: EngineEvent, titles: Record<string, string>): RSta
       break;
   }
   if (n) nodes[nid] = n;
+  if (ev.kind === "job_failed" || ev.kind === "job_cancelled") {
+    // Calls still in flight when a run ends are discarded and send no event of their own.
+    out.inflight = 0;
+    for (const id of Object.keys(nodes)) {
+      const x = nodes[id];
+      if (x.inflight || x.state === "run") nodes[id] = { ...x, inflight: 0, state: x.state === "run" ? "idle" : x.state };
+    }
+  }
   return out;
 }
 const INS = (i: string | null) => (i === "reduce" ? C.teal : i === "filter" ? C.orange : C.blue);

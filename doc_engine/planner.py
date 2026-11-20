@@ -79,14 +79,17 @@ async def runnable(db: Db, flow_id: str) -> dict | None:
 
 async def submit_job(db: Db, cfg: Section, *, graph: dict, flow_id: str | None, flow_name: str,
                      flow_version: int | None, documents: dict[str, dict], priority: str = "interactive",
-                     label: str = "", values: dict | None = None) -> str:
+                     label: str = "", values: dict | None = None, values_resolved: bool = False) -> str:
     """`documents` maps every source node id of the flow to {document_id, name, pages}.
     `values` holds the flow's value inputs by name; an input left out takes its default."""
     problems = [p for p in flows.validate(graph, list(cfg.models)) if p["level"] == "error"]
     if problems:
         raise ValueError("this flow cannot run yet: " + "; ".join(p["message"] for p in problems))
     # Filled in once, here. The job's copy of the graph holds the values, so nothing later sees a placeholder.
-    values = flows.resolve_values(graph, values, int(cfg.worker.get("max_value_chars", 20000)))
+    # A caller that has already checked the values says so: checking twice would read a JSON value that is
+    # itself a piece of text as JSON a second time.
+    if not values_resolved:
+        values = flows.resolve_values(graph, values, int(cfg.worker.get("max_value_chars", 20000)))
     graph = flows.apply_values(graph, values)
     if priority not in PRIORITY_RANK:
         raise ValueError("priority must be interactive or bulk")
@@ -265,6 +268,13 @@ async def plan_target(conn: psycopg.AsyncConnection, cfg: Section, job: dict, sr
             other = await cur.fetchone()
             if other is not None:
                 gate_id, shared_gate = other["task_id"], True
+                # A warm-up that is already sent is shared whatever its place in the queue. If it comes back
+                # (a rejection, a gateway error, a lost worker) it must not queue behind work this job goes
+                # ahead of, so it takes this job's place when that is the earlier one.
+                await conn.execute(
+                    "UPDATE tasks SET priority_rank = %s, job_submitted_at = %s WHERE task_id = %s "
+                    "AND (priority_rank, job_submitted_at) > (%s, %s)",
+                    (job["priority_rank"], job["submitted_at"], gate_id, job["priority_rank"], job["submitted_at"]))
         if not warm and gate_id is None:
             seq = await _take_seq(conn, job_id, 1)
             cur = await conn.execute(
@@ -441,7 +451,7 @@ async def fail_job(conn: psycopg.AsyncConnection, job_id: str, error: str, state
     # Calls of other jobs that were waiting for a warm-up of this job run without it.
     await conn.execute(
         "UPDATE tasks SET state = 'ready', gate_task_id = NULL WHERE state = 'waiting' AND job_id <> %s AND gate_task_id IN "
-        "(SELECT task_id FROM tasks WHERE job_id = %s AND kind = 'warmup' AND state = 'cancelled')", (job_id, job_id))
+        "(SELECT task_id FROM tasks WHERE job_id = %s AND state = 'cancelled')", (job_id, job_id))
     await conn.execute(
         "UPDATE job_steps SET state = %s, finished_at = clock_timestamp() WHERE job_id = %s AND state <> 'done'",
         ("cancelled" if state == "cancelled" else "failed", job_id))

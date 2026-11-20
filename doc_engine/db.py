@@ -17,6 +17,10 @@ from psycopg.types.json import Jsonb
 
 from .config import ROOT, Section, effective_out_capacity, postgres_conninfo
 
+
+class DatabaseUnavailable(RuntimeError):
+    """The database could not be reached, or an operation kept failing, after the retries here."""
+
 log = logging.getLogger("doc_engine.db")
 
 REQUIRED_TABLES = ["flows", "flow_versions", "documents", "jobs", "job_steps", "tasks", "quota",
@@ -45,7 +49,7 @@ class Db:
                 log.warning("postgres connect failed (attempt %d): %s", attempt + 1, str(e).strip())
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, 8)
-        raise RuntimeError(f"could not connect to Postgres after retries: {last}")
+        raise DatabaseUnavailable(f"could not connect to Postgres after retries: {last}")
 
     @asynccontextmanager
     async def conn(self) -> AsyncIterator[psycopg.AsyncConnection]:
@@ -99,7 +103,7 @@ class Db:
                 last = e
                 log.warning("database operation failed (attempt %d): %s", attempt + 1, str(e).strip())
                 await asyncio.sleep(0.2 * (attempt + 1))
-        raise RuntimeError(f"database operation failed after {retries} attempts: {last}")
+        raise DatabaseUnavailable(f"database operation failed after {retries} attempts: {last}")
 
     async def tx(self, fn: Callable[[psycopg.AsyncConnection], Awaitable[Any]], retries: int = 3) -> Any:
         """Runs fn(conn) inside one transaction."""
@@ -150,7 +154,7 @@ async def reset_schema(db: Db) -> None:
         await conn.execute(sql)
 
 
-async def sync_models(db: Db, cfg: Section) -> None:
+async def sync_models(db: Db, cfg: Section, prune: bool = True) -> None:
     """Copies each model's limits from configuration into its quota row. Ledger state is kept."""
     led = cfg.ledger
     margin = float(led.get("safety_margin_fraction", 0.05))
@@ -166,10 +170,12 @@ async def sync_models(db: Db, cfg: Section) -> None:
                    safety_margin = excluded.safety_margin, hold_s = excluded.hold_s, learn = excluded.learn,
                    hold_max_s = excluded.hold_max_s""",
             (key, m.gateway_name, float(m.itpm), float(m.otpm), float(m.get("qph", 0)),
-             effective_out_capacity(cfg, key), float(m.itpm) * (1 - margin), led.get("capacity_mode", "fixed"),
+             effective_out_capacity(cfg, key), float(m.itpm) * (1 - margin), str(led.get("capacity_mode", "fixed")).lower(),
              float(m.get("bucket_measured") or m.get("bucket_capacity_output") or m.otpm),
              float(led.get("default_call_s", 9)), margin, float(led.get("hold_on_429_s", 1)),
              bool(led.get("learn_estimates", True)), float(led.get("hold_on_429_max_s", 15))))
+    if not prune:
+        return
     # A model taken out of the settings leaves the quota panels once nothing of it is waiting or in flight.
     await db.execute(
         """DELETE FROM quota q WHERE NOT (q.model = ANY(%s))

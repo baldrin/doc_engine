@@ -47,6 +47,26 @@ def J(data: Any, status: int = 200) -> Response:
 
 
 BLANK_GRAPH: dict = {"nodes": [], "edges": [], "inputs": []}       # a new flow starts empty
+MAX_JSON_BYTES = 20 * 1024 * 1024      # a request that is not a file upload; a large flow is well under 1 MB
+
+
+def checked_graph(graph: Any) -> dict:
+    """A graph in the shape the rest of the code relies on, or ValueError. Stored graphs are read by every
+    screen, so one in the wrong shape must not get in."""
+    if not isinstance(graph, dict):
+        raise ValueError("The flow's graph must be an object.")
+    nodes, edges, inputs = graph.get("nodes", []), graph.get("edges", []), graph.get("inputs", [])
+    if not isinstance(nodes, list) or not isinstance(edges, list) or not isinstance(inputs, list):
+        raise ValueError("The flow's nodes, edges and inputs must be lists.")
+    for n in nodes:
+        if not (isinstance(n, dict) and isinstance(n.get("id"), str) and isinstance(n.get("type"), str)
+                and isinstance(n.get("data") or {}, dict)):
+            raise ValueError("Every block of a flow needs an id, a type and settings.")
+    for e in edges:
+        if not (isinstance(e, dict) and all(isinstance(e.get(k), str) for k in ("id", "source", "target"))
+                and isinstance(e.get("data") or {}, dict)):
+            raise ValueError("Every connection of a flow needs an id, a source and a target.")
+    return {**graph, "nodes": nodes, "edges": edges, "inputs": inputs}
 
 
 class EventHub:
@@ -97,11 +117,19 @@ class EventHub:
         row = await self.db.fetchone("SELECT coalesce(max(event_id), 0) AS m FROM events")
         self.last_id = row["m"]
         last_quota = 0.0
+        idle = False
         while True:
             try:
                 await asyncio.sleep(0.25)
                 if not self.subs:
+                    idle = True
                     continue
+                if idle:
+                    # Nobody was listening. A new viewer reads what it missed from the database itself, so
+                    # start from the newest event and do not push the whole backlog through.
+                    idle = False
+                    row = await self.db.fetchone("SELECT coalesce(max(event_id), 0) AS m FROM events")
+                    self.last_id = max(self.last_id, row["m"] - 300)
                 # Ids are handed out before commit, so a row can appear behind a later id. Look back a little.
                 rows = await self.db.fetch(
                     "SELECT event_id, ts, kind, job_id, node_id, task_id, model, data FROM events "
@@ -191,6 +219,16 @@ def create_app(cfg: Section) -> FastAPI:
 
     app = FastAPI(title="Document Engine", lifespan=lifespan, docs_url=None, redoc_url=None)
 
+    @app.middleware("http")
+    async def body_limit(request: Request, call_next: Any) -> Response:
+        # File uploads have their own limit and are read in pieces. Everything else is JSON and small.
+        declared = request.headers.get("content-length", "")
+        upload = request.url.path in ("/api/documents", "/api/v1/files") or \
+            request.headers.get("content-type", "").startswith("multipart/form-data")
+        if not upload and declared.isdigit() and int(declared) > MAX_JSON_BYTES:
+            return J({"error": "The request is too large.", "code": "request_too_large"}, 413)
+        return await call_next(request)
+
     @app.exception_handler(ValueError)
     async def value_error(_: Request, e: ValueError) -> Response:
         return J({"error": str(e)}, 400)
@@ -250,8 +288,8 @@ def create_app(cfg: Section) -> FastAPI:
         body = await request.json()
         fid = flows.new_id("flow")
         await db.execute("INSERT INTO flows (flow_id, name, description, graph) VALUES (%s,%s,%s,%s)",
-                         (fid, body.get("name") or "Untitled flow", body.get("description") or "",
-                          Jsonb(body.get("graph") or BLANK_GRAPH)))
+                         (fid, str(body.get("name") or "Untitled flow"), str(body.get("description") or ""),
+                          Jsonb(checked_graph(body.get("graph") or BLANK_GRAPH))))
         return J(await flow_row(fid))
 
     @app.get("/api/flows/{flow_id}")
@@ -273,8 +311,8 @@ def create_app(cfg: Section) -> FastAPI:
         body = await request.json()
         row = await flow_row(flow_id)
         await db.execute("UPDATE flows SET name = %s, description = %s, graph = %s, updated_at = now() WHERE flow_id = %s",
-                         (body.get("name") or row["name"], body.get("description", row["description"]),
-                          Jsonb(body.get("graph") or row["graph"]), flow_id))
+                         (str(body.get("name") or row["name"]), str(body.get("description", row["description"]) or ""),
+                          Jsonb(checked_graph(body.get("graph") or row["graph"])), flow_id))
         return J(await flow_row(flow_id))
 
     @app.delete("/api/flows/{flow_id}")
@@ -299,8 +337,8 @@ def create_app(cfg: Section) -> FastAPI:
         if await _same_as_latest(row):
             return J({**row, "unchanged": True})
         v = row["version"] + 1
-        await db.execute("INSERT INTO flow_versions (flow_id, version, name, graph) VALUES (%s,%s,%s,%s)",
-                         (flow_id, v, row["name"], Jsonb(row["graph"])))
+        await db.execute("INSERT INTO flow_versions (flow_id, version, name, graph, description) VALUES (%s,%s,%s,%s,%s)",
+                         (flow_id, v, row["name"], Jsonb(row["graph"]), row["description"]))
         await db.execute("UPDATE flows SET version = %s, updated_at = now() WHERE flow_id = %s", (v, flow_id))
         return J(await flow_row(flow_id))
 
@@ -325,8 +363,8 @@ def create_app(cfg: Section) -> FastAPI:
             await db.execute("UPDATE flows SET published_version = version, updated_at = now() WHERE flow_id = %s", (flow_id,))
             return J({**await flow_row(flow_id), "unchanged": unchanged})
         v = row["version"] + 1
-        await db.execute("INSERT INTO flow_versions (flow_id, version, name, graph) VALUES (%s,%s,%s,%s)",
-                         (flow_id, v, row["name"], Jsonb(row["graph"])))
+        await db.execute("INSERT INTO flow_versions (flow_id, version, name, graph, description) VALUES (%s,%s,%s,%s,%s)",
+                         (flow_id, v, row["name"], Jsonb(row["graph"]), row["description"]))
         await db.execute("UPDATE flows SET version = %s, published_version = %s, updated_at = now() WHERE flow_id = %s",
                          (v, v, flow_id))
         return J(await flow_row(flow_id))
@@ -335,9 +373,11 @@ def create_app(cfg: Section) -> FastAPI:
         """True when the draft says the same as the latest saved version, under the same name."""
         if not row["version"]:
             return False
-        latest = await db.fetchone("SELECT name, graph FROM flow_versions WHERE flow_id = %s AND version = %s",
+        latest = await db.fetchone("SELECT name, graph, description FROM flow_versions WHERE flow_id = %s AND version = %s",
                                    (row["flow_id"], row["version"]))
-        return bool(latest) and latest["name"] == row["name"] and flows.meaning(latest["graph"]) == flows.meaning(row["graph"])
+        return (bool(latest) and latest["name"] == row["name"]
+                and (latest["description"] is None or latest["description"] == (row["description"] or ""))
+                and flows.meaning(latest["graph"]) == flows.meaning(row["graph"]))
 
     @app.post("/api/flows/{flow_id}/unpublish")
     async def unpublish(flow_id: str) -> Response:
@@ -442,6 +482,8 @@ def create_app(cfg: Section) -> FastAPI:
     @app.get("/api/documents/{document_id}/pages/{page}")
     async def page_pdf(document_id: str, page: int) -> Response:
         """One page as a person sees it: a one-page PDF, the image, or that page of a text file."""
+        if page < 1:
+            raise HTTPException(404, "page not found")
         try:
             data, media_type = await docs.page_view(document_id, page)
         except (KeyError, IndexError):
@@ -496,7 +538,7 @@ def create_app(cfg: Section) -> FastAPI:
             ids.append(await planner.submit_job(
                 db, cfg, graph=graph, flow_id=flow["flow_id"] if flow else None,
                 flow_name=flow_name, flow_version=flow_version, documents=documents, priority=pr, label=label,
-                values=values))
+                values=values, values_resolved=True))
         nudge()
         return J({"job_ids": ids})
 

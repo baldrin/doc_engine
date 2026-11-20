@@ -10,6 +10,7 @@ Three kinds of file are accepted:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 from collections import OrderedDict
@@ -26,6 +27,7 @@ IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
 OFFICE_EXT = {".doc", ".docx", ".docm", ".odt", ".rtf", ".xls", ".xlsx", ".xlsm", ".ppt", ".pptx", ".pages"}
 ACCEPTED = "PDF, an image (PNG, JPEG, GIF, WebP, BMP, TIFF) or a text file"
 TEXT_MAX_BYTES = 5 * 1024 * 1024
+IMAGE_MAX_PIXELS = 60_000_000           # decoded size is refused above this, whatever the file size
 IMAGE_TARGET_BYTES = 3_500_000          # the API limit is 5 MB per image once encoded; stay well under
 
 
@@ -41,7 +43,9 @@ def detect_kind(name: str, data: bytes) -> str:
     """pdf, image or text, from the content first and the name second. ValueError for anything else."""
     head = data[:1024]
     ext = _ext(name)
-    if b"%PDF-" in head:
+    # A PDF starts with its marker. One with a few stray bytes in front is still accepted when it is named .pdf;
+    # a text file that merely mentions the marker is not taken for one.
+    if head.lstrip(b"\xef\xbb\xbf \t\r\n").startswith(b"%PDF-") or (b"%PDF-" in head and ext == ".pdf"):
         return "pdf"
     if (head.startswith((b"\x89PNG", b"\xff\xd8\xff", b"GIF8", b"II*\x00", b"MM\x00*"))
             or (head[:4] == b"RIFF" and head[8:12] == b"WEBP") or (head[:2] == b"BM" and ext == ".bmp")):
@@ -68,7 +72,12 @@ def prepare_image(name: str, data: bytes, max_px: int = 1568) -> tuple[bytes, st
     from PIL import Image, ImageOps
     try:
         img = Image.open(io.BytesIO(data))
+        if img.size[0] * img.size[1] > IMAGE_MAX_PIXELS:   # known from the header, before anything is decoded
+            raise ValueError(f"{name} is {img.size[0]:,} by {img.size[1]:,} pixels, which is too large. "
+                             f"The limit is {IMAGE_MAX_PIXELS // 1_000_000} million pixels.")
         img.load()                                     # first frame of an animation or a multi-page TIFF
+    except ValueError:
+        raise
     except Exception as e:
         raise ValueError(f"{name} could not be read as an image: {e}") from e
     lossless = (img.format or "").upper() in ("PNG", "GIF", "BMP", "TIFF")
@@ -235,6 +244,7 @@ class DocumentCache:
         self.db = db
         self._docs: OrderedDict[str, dict] = OrderedDict()
         self._windows: OrderedDict[tuple, bytes] = OrderedDict()
+        self._loading: dict[str, asyncio.Lock] = {}
         self.max_docs = max_docs
         self.max_windows = max_windows
 
@@ -244,6 +254,18 @@ class DocumentCache:
         if d is not None:
             self._docs.move_to_end(document_id)
             return d
+        # One load per file at a time: a burst of calls on a file not yet here must not each fetch a copy.
+        lock = self._loading.setdefault(document_id, asyncio.Lock())
+        async with lock:
+            d = self._docs.get(document_id)
+            if d is not None:
+                return d
+            try:
+                return await self._load(document_id)
+            finally:
+                self._loading.pop(document_id, None)
+
+    async def _load(self, document_id: str) -> dict:
         row = await self.db.fetchone("SELECT name, kind, media_type, content FROM documents WHERE document_id = %s",
                                      (document_id,))
         if row is None:

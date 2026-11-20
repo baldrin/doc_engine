@@ -72,7 +72,7 @@ class CallResult:
 
     @property
     def truncated(self) -> bool:
-        return self.stop_reason == "max_tokens"
+        return self.stop_reason in ("max_tokens", "model_context_window_exceeded")
 
 
 def parse_429(body: Any, text: str) -> str:
@@ -93,6 +93,20 @@ def parse_429(body: Any, text: str) -> str:
     if re.search(r"input", msg, re.I):
         return "input"
     return "unknown"
+
+
+# Error types a gateway can send inside a stream that has already answered 200.
+STREAM_TRANSIENT = {"overloaded_error", "api_error", "timeout_error"}
+
+
+def _error_type(body: Any) -> str:
+    """The error type named in an error body, or '' when there is none."""
+    if isinstance(body, dict):
+        err = body.get("error")
+        if isinstance(err, dict):
+            return str(err.get("type") or "")
+        return str(body.get("type") or "")
+    return ""
 
 
 def _now() -> datetime:
@@ -136,7 +150,15 @@ async def execute_call(client: AsyncAnthropic, cfg: Section, params: dict, *, st
     t0 = time.monotonic()
     res.sent_at = _now()
     try:
-        headers = auth_headers(cfg)
+        try:
+            headers = auth_headers(cfg)
+        except Exception as e:
+            # No token says nothing about the call itself. It is tried again, like a gateway error.
+            res.outcome = "transient"
+            res.error = {"message": f"could not get a gateway token: {type(e).__name__}: {e}"[:2000]}
+            res.done_at = _now()
+            res.duration_s = time.monotonic() - t0
+            return res
         if streaming:
             chars = 0
             last_report = 0.0
@@ -154,6 +176,13 @@ async def execute_call(client: AsyncAnthropic, cfg: Section, params: dict, *, st
                             last_report = now
                             await on_progress(int(chars / 3.6))
                 msg = await stream.get_final_message()
+            if getattr(msg, "stop_reason", None) is None:
+                # The stream closed before the reply said how it ended: part of a reply, not a reply.
+                res.outcome = "transient"
+                res.error = {"message": "the streamed reply ended before it was complete"}
+                res.done_at = _now()
+                res.duration_s = time.monotonic() - t0
+                return res
         else:
             raw = await client.messages.with_raw_response.create(**params, extra_headers=headers)
             res.http_status = raw.status_code
@@ -174,14 +203,26 @@ async def execute_call(client: AsyncAnthropic, cfg: Section, params: dict, *, st
         res.error = {"body": body if isinstance(body, (dict, list, str)) else str(body), "text": text[:2000]}
     except anthropic.APIStatusError as e:
         res.http_status = e.status_code
-        res.outcome = "transient" if e.status_code in TRANSIENT_STATUS else "permanent"
         body = getattr(e, "body", None)
+        kind = _error_type(body)
+        if e.status_code in TRANSIENT_STATUS:
+            res.outcome = "transient"
+        elif e.status_code == 200 and kind == "rate_limit_error":
+            # An error event inside a stream carries the stream's own status, 200.
+            res.outcome = "429"
+            res.limit_type = parse_429(body, str(e))
+        elif e.status_code == 200 and kind in STREAM_TRANSIENT:
+            res.outcome = "transient"
+        else:
+            res.outcome = "permanent"
         res.error = {"body": body if isinstance(body, (dict, list, str)) else str(body), "message": str(e)[:2000]}
         try:
             res.request_id = e.response.headers.get("x-request-id")
         except Exception:
             pass
-    except (anthropic.APITimeoutError, anthropic.APIConnectionError) as e:
+    except (anthropic.APITimeoutError, anthropic.APIConnectionError, httpx2.TransportError) as e:
+        # httpx2.TransportError: a connection lost while a streamed reply was being read, which the
+        # SDK passes on as it is.
         res.outcome = "transient"
         res.error = {"message": f"{type(e).__name__}: {e}"[:2000]}
     except asyncio.CancelledError:

@@ -186,7 +186,7 @@ async def cmd_load(cfg: Section, args: argparse.Namespace) -> int:
             print(f"submit between 1 and {planner.MAX_JOBS_PER_SUBMIT} jobs at a time (--jobs plus --bulk)")
             return 1
         if not args.dry_run:                  # a dry run reads only
-            await sync_models(db, cfg)
+            await sync_models(db, cfg, prune=False)
         flow = await db.fetchone("SELECT * FROM flows WHERE flow_id = %s", (args.flow,))
         if not flow:
             print("flow not found. Run `python -m doc_engine samples` and use the ids it prints.")
@@ -259,7 +259,7 @@ async def cmd_load(cfg: Section, args: argparse.Namespace) -> int:
             job_ids.append(await planner.submit_job(
                 db, cfg, graph=flow["graph"], flow_id=flow["flow_id"], flow_name=flow["name"],
                 flow_version=flow["version"], documents=documents, priority=pr, label=f"{args.label} {pr} {i + 1}".strip(),
-                values=values))
+                values=values, values_resolved=True))
         if worker:
             worker.nudge()
         print(f"submitted {len(job_ids)} job(s)")
@@ -297,7 +297,7 @@ async def cmd_worker(cfg: Section, args: argparse.Namespace) -> int:
         if await _tables_missing(db):
             await db.close()
             return 1
-        await sync_models(db, cfg)
+        await sync_models(db, cfg, prune=False)      # only the application removes a model's quota row
         w = Worker(cfg, db)
         await w.start()
     except BaseException:
