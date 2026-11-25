@@ -141,16 +141,65 @@ def _msg(res) -> str:
     return str(e.get("message") or b or "")
 
 
+PROBE_MAX_TOKENS = 1500
+
+
+def probe_spacing(otpm: float) -> float:
+    """Seconds between calls so that replies charge about twice what the bucket regains. Slow enough to see
+    where the bucket overflows, fast enough that it does."""
+    refill = max(1.0, float(otpm) / 60.0)
+    return round(min(5.0, max(0.05, PROBE_MAX_TOKENS / (2.0 * refill))), 2)
+
+
+def bucket_bounds(records: list[dict], rate: float) -> dict | None:
+    """The gateway's output bucket, from the calls of one probe run.
+
+    The gateway charges a call's output when the call completes, regains `rate` tokens a second, and cannot
+    regain more than a full bucket: before the first reply completes, nothing is regained at all. So the amount
+    in use is followed call by call, never below zero. The bucket is at least the most that was in use when an
+    accepted call was sent, and less than what was in use when the first rejected call was sent."""
+    rej = sorted((r for r in records if r["outcome"] == "429"), key=lambda r: r["sent_s"])
+    ok = [r for r in records if r["outcome"] == "ok"]
+    if not rej or not ok:
+        return None
+    t_rej = rej[0]["sent_s"]
+    done = sorted((r for r in ok if r["done_s"] <= t_rej), key=lambda r: r["done_s"])
+
+    def in_use(t: float) -> float:
+        level, at = 0.0, 0.0
+        for r in done:
+            if r["done_s"] > t:
+                break
+            level = max(0.0, level - rate * (r["done_s"] - at)) + r["output_tokens"]
+            at = r["done_s"]
+        return max(0.0, level - rate * (t - at))
+
+    sends = [r["sent_s"] for r in ok if r["sent_s"] < t_rej]
+    low = max((in_use(t) for t in sends), default=0.0)
+    high = in_use(t_rej)
+    first_done = done[0]["done_s"] if done else t_rej
+    recent = [r for r in done if r["done_s"] > t_rej - 2.0]
+    window = min(2.0, max(0.1, t_rej - first_done))
+    return {"first_rejected_sent_s": t_rej, "first_completion_s": first_done, "completed_before": len(done),
+            "output_before": sum(r["output_tokens"] for r in done),
+            "regained": sum(r["output_tokens"] for r in done) - high,
+            "bucket_low": low, "bucket_high": high,
+            "charge_per_s": sum(r["output_tokens"] for r in recent) / window,
+            "accepted_after": len([r for r in ok if r["sent_s"] > t_rej])}
+
+
 async def cmd_probe_bucket(cfg: Section, args: argparse.Namespace) -> int:
     if args.model not in cfg.models:
         print(f"model {args.model!r} is not configured (configured: {', '.join(cfg.models)})")
         return 1
     m = cfg.models[args.model]
-    per_call = 1200
+    per_call = PROBE_MAX_TOKENS
+    if args.spacing is None:
+        args.spacing = probe_spacing(m.otpm)
     est_out = args.calls * per_call
     cost = est_out * m.pricing.output / 1e6 + args.calls * 60 * m.pricing.input / 1e6
     print(f"bucket probe on {args.model} ({m.gateway_name})")
-    print(f"  up to {args.calls} calls, one every {args.spacing}s, about {per_call} output tokens each")
+    print(f"  up to {args.calls} calls, one every {args.spacing}s, up to {per_call} output tokens each")
     print(f"  at most about {est_out:,} output tokens, about ${cost:.2f}; stops 20 s after the first rejection")
     print(f"  configured OTPM {m.otpm:,.0f}")
     if args.dry_run:
@@ -163,7 +212,7 @@ async def cmd_probe_bucket(cfg: Section, args: argparse.Namespace) -> int:
     client = make_client(cfg)
     off = {"disabled": {"thinking": {"type": "disabled"}}, "between_tools": {"thinking": {"type": "between_tools"}},
            "effort_low": {"thinking": {"type": "adaptive"}, "output_config": {"effort": "low"}}}[m.get("thinking_off", "disabled")]
-    params = {"model": m.gateway_name, "max_tokens": 1500, "messages": [{"role": "user", "content": PROBE_PROMPT}], **off}
+    params = {"model": m.gateway_name, "max_tokens": PROBE_MAX_TOKENS, "messages": [{"role": "user", "content": PROBE_PROMPT}], **off}
     t0 = time.monotonic()
     records: list[dict] = []
     first_429: list[float] = []
@@ -200,29 +249,42 @@ async def cmd_probe_bucket(cfg: Section, args: argparse.Namespace) -> int:
     print(f"\n  sent {len(records)}, accepted {len(ok)}, rejected {len(rej)}")
     result: dict = {"model": args.model, "gateway_name": m.gateway_name, "otpm": m.otpm, "spacing_s": args.spacing,
                     "sent": len(records), "accepted": len(ok), "rejected": len(rej)}
-    if rej:
-        t1 = min(r["done_s"] for r in rej)
-        before = [r for r in ok if r["done_s"] <= t1]
-        charged = sum(r["output_tokens"] for r in before)
-        in_flight = len([r for r in records if r["sent_s"] <= t1 < r["done_s"] and r["outcome"] == "ok"])
+    b = bucket_bounds(records, rate)
+    if b:
+        t1 = b["first_rejected_sent_s"]
+        in_flight = len([r for r in ok if r["sent_s"] <= t1 < r["done_s"]])
         dur = sum(r["done_s"] - r["sent_s"] for r in ok) / max(1, len(ok))
-        bucket = max(0.0, charged - rate * t1)
         after = [r for r in ok if r["sent_s"] > t1]
         span = max((r["done_s"] for r in records), default=t1) - t1
-        result.update({"first_429_s": t1, "completed_before": len(before), "output_before": charged,
-                       "in_flight_at_first_429": in_flight, "mean_call_s": dur, "bucket_estimate": bucket,
+        low, high = b["bucket_low"], b["bucket_high"]
+        coarse = b["charge_per_s"] > max(1.0, high) / 5.0       # one second of replies moves the answer by a fifth
+        result.update({"first_429_s": t1, "first_completion_s": b["first_completion_s"],
+                       "completed_before": b["completed_before"], "output_before": b["output_before"],
+                       "regained_before": b["regained"], "in_flight_at_first_429": in_flight, "mean_call_s": dur,
+                       "bucket_low": low, "bucket_high": high, "bucket_estimate": low,
+                       "charge_per_s_at_first_429": b["charge_per_s"], "accepted_after_first_429": b["accepted_after"],
+                       "coarse": coarse,
                        "limit_types": sorted({r["limit_type"] for r in rej if r["limit_type"]}),
                        "sample_429": rej[0]["error"],
                        "accepted_output_per_min_after": (sum(r["output_tokens"] for r in after) / span * 60) if span > 5 else None})
-        print(f"  first rejection at t+{t1:.1f}s; {len(before)} calls had completed with {charged:,} output tokens; "
-              f"{in_flight} in flight")
-        print(f"  refill during that time at the configured OTPM: {rate * t1:,.0f}")
-        print(f"  => output charged beyond refill before rejection began: about {bucket:,.0f} tokens (the bucket estimate)")
+        print(f"  first rejection at t+{t1:.1f}s; {b['completed_before']} calls had completed with "
+              f"{b['output_before']:,} output tokens; {in_flight} in flight")
+        print(f"  first reply completed at t+{b['first_completion_s']:.1f}s; regained since then at the configured OTPM: "
+              f"{b['regained']:,.0f}")
+        print(f"  => the bucket holds between {low:,.0f} and {high:,.0f} output tokens")
+        print(f"  replies were being charged at about {b['charge_per_s']:,.0f} tokens a second when the rejection came; "
+              f"{b['accepted_after']} call(s) were still accepted after it")
         print(f"  mean call duration {dur:.1f}s; rejection names: {', '.join(result['limit_types']) or 'unknown'}")
         if result["accepted_output_per_min_after"]:
             print(f"  after the first rejection the gateway accepted about {result['accepted_output_per_min_after']:,.0f} output tokens per minute")
-        print(f"\n  To use this: set models.{args.model}.bucket_measured to about {bucket:,.0f}. Keep bucket_capacity_output\n"
-              f"  until the result has been reviewed. Bring the results file back for interpretation.")
+        if coarse:
+            print(f"\n  This run is too coarse to rely on: one second of replies is {b['charge_per_s']:,.0f} tokens, a large\n"
+                  f"  part of the result. Wait until the model has been idle for a while, then run again with a larger\n"
+                  f"  --spacing (leave --spacing out to let the probe choose: {probe_spacing(m.otpm)}s for this model).")
+        else:
+            print(f"\n  To use this: set models.{args.model}.bucket_measured to about {low:,.0f}. Keep bucket_capacity_output\n"
+                  f"  until the result has been reviewed. The bucket must have been full at the start: run this only\n"
+                  f"  after the model has been idle for a while.")
     elif not ok:
         errs = [r for r in records if r.get("error")]
         first = errs[0] if errs else {}

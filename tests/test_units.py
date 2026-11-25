@@ -415,3 +415,32 @@ def test_review_fixes_files_and_gateway():
     assert _error_type({"type": "error", "error": {"type": "overloaded_error", "message": "x"}}) == "overloaded_error"
     assert _error_type("text") == "" and _error_type({"error_code": "X"}) == ""
     assert CallResult(stop_reason="model_context_window_exceeded").truncated
+
+
+def test_probe_bucket_arithmetic():
+    """The probe's bucket estimate: nothing is regained before the first reply, and never more than a full bucket."""
+    from doc_engine.preflight import bucket_bounds, probe_spacing
+
+    # A 15,000-token bucket regaining 1,000 a second. Calls take 10 s and return 1,500 tokens; one starts every 0.5 s.
+    rate, cap, level, at, records = 1000.0, 15000.0, 0.0, 0.0, []
+    events = sorted([(i * 0.5, "send", i) for i in range(80)] + [(i * 0.5 + 10.0, "done", i) for i in range(80)])
+    accepted = set()
+    for t, kind, i in events:
+        level, at = max(0.0, level - rate * (t - at)), t
+        if kind == "send":
+            if level >= cap:
+                records.append({"i": i, "sent_s": t, "done_s": t + 0.1, "outcome": "429", "output_tokens": 0})
+            else:
+                accepted.add(i)
+        elif i in accepted:
+            level += 1500
+            records.append({"i": i, "sent_s": t - 10.0, "done_s": t, "outcome": "ok", "output_tokens": 1500})
+    b = bucket_bounds(records, rate)
+    assert b["first_completion_s"] == 10.0
+    assert b["bucket_low"] < cap <= b["bucket_high"]
+    assert b["bucket_high"] - b["bucket_low"] <= 1500
+    # The earlier arithmetic subtracted refill from the start of the run and came out far too low.
+    assert b["output_before"] - rate * b["first_rejected_sent_s"] < cap / 2
+
+    assert bucket_bounds([r for r in records if r["outcome"] == "ok"], rate) is None
+    assert probe_spacing(20000) == 2.25 and probe_spacing(100000) == 0.45

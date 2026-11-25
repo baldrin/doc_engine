@@ -386,7 +386,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("what", choices=["bucket"])
     p.add_argument("--model", required=True)
     p.add_argument("--calls", type=int, default=300)
-    p.add_argument("--spacing", type=float, default=0.1)
+    p.add_argument("--spacing", type=float, default=None,
+                   help="seconds between calls (default: chosen from the model's OTPM)")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--confirm-saturation", action="store_true")
 

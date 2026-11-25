@@ -27,11 +27,15 @@ for the person who holds the gateway token and runs the commands.
    10 and **Accept delivery charges** set to Yes: the monitor arm price (68.50 against 62.50) and the delivery
    charge should no longer be reported, and the desk frame quantity still should.
 3. `python -m doc_engine probe bucket --model haiku --dry-run`, then with `--confirm-saturation`. Repeat for `opus`.
-   The probe saturates that model on purpose (at most about $0.27 for Haiku and about $11 for Opus at the prices in `config.example.yaml`, less if it stops early; `--dry-run` prints the figure).
+   The probe saturates that model on purpose (at most about $0.34 for Haiku and about $14 for Opus at the prices in `config.example.yaml`, less if it stops early; `--dry-run` prints the figure).
    Bring back the files it writes under `results/`.
 4. Ten jobs: Activity, 10 interactive jobs on the 150-page sample, or
    `python -m doc_engine load --flow flow_sample_medical --document doc_sample_medical_150 --jobs 10 --confirm-saturation`.
 5. Bring back the printed summaries. `python -m doc_engine export --job ID --out DIR` gives the raw rows.
+
+A bucket probe measures the room the bucket had when the run started, so run one only when nothing has used
+that model for a while. How long the gateway takes to recover from a saturating run is not yet known: on
+2026-11-25 a second Haiku probe 20 minutes after the first found far less room. Allow 30 minutes or more.
 
 Leave at least a minute between saturating runs: the ledger starts each process believing the
 quota is as it last recorded it, and other applications' use is invisible to it.

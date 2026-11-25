@@ -305,7 +305,7 @@ the database, so a running application cannot see what the probe used.
 |---|---|---|
 | `--model NAME` | required | The model's key in the settings, for example `haiku`. |
 | `--calls N` | `300` | The most calls to send. |
-| `--spacing S` | `0.1` | Seconds between the starts of two calls. |
+| `--spacing S` | chosen from the model's `otpm` | Seconds between the starts of two calls. Left out, the probe picks a spacing at which replies charge about twice what the bucket regains: 2.25 for a model with 20,000 OTPM, 0.45 for one with 100,000. |
 | `--dry-run` | off | Print the plan and cost and stop. |
 | `--confirm-saturation` | off | Always needed to send anything. |
 
@@ -318,7 +318,7 @@ The plan, also in a dry run:
 
 ```text
 bucket probe on <model> (<gateway name>)
-  up to <N> calls, one every <S>s, about 1200 output tokens each
+  up to <N> calls, one every <S>s, up to 1500 output tokens each
   at most about <tokens> output tokens, about $<cost>; stops 20 s after the first rejection
   configured OTPM <otpm>
 ```
@@ -328,8 +328,10 @@ After the run, `sent N, accepted N, rejected N`, and if there was a rejection:
 | Line | Meaning |
 |---|---|
 | `first rejection at t+Ns; N calls had completed with N output tokens; N in flight` | When the gateway first said no, and what had been charged by then. |
-| `refill during that time at the configured OTPM: N` | What the bucket regained meanwhile. |
-| `=> output charged beyond refill before rejection began: about N tokens (the bucket estimate)` | The result. |
+| `first reply completed at t+Ns; regained since then at the configured OTPM: N` | Nothing is charged, and so nothing regained, before the first reply completes. From then on the probe follows the amount in use reply by reply, never below zero. |
+| `=> the bucket holds between N and N output tokens` | The result. The lower figure is the most that was in use when an accepted call was sent; the higher is what was in use when the first rejected call was sent. |
+| `replies were being charged at about N tokens a second when the rejection came; N call(s) were still accepted after it` | How fine the measurement is. If the gateway notices a second late, the result is off by this many tokens. |
+| `This run is too coarse to rely on: ...` | One second of replies is more than a fifth of the result. Run again with a larger `--spacing`. Printed in place of the `To use this` line. |
 | `mean call duration Ns; rejection names: output` | The call length, and which limit the rejections named. |
 | `after the first rejection the gateway accepted about N output tokens per minute` | The sustained rate under saturation, when the run went on long enough to tell. |
 | `To use this: set models.<name>.bucket_measured to about N. Keep bucket_capacity_output until the result has been reviewed.` | What to change. |
@@ -340,7 +342,7 @@ Last, `raw data: <path>`. The file is `results/<UTC date-time>_probe_bucket_<mod
 root, with the result and one record per call. The `results/` directory is not committed.
 
 The cost in the plan is an upper bound: every call sent and none rejected. With the default options and the
-prices in `config.example.yaml` it comes to about $0.27 for Haiku, $5.45 for Sonnet and $10.91 for Opus. A
+prices in `config.example.yaml` it comes to about $0.34 for Haiku, $6.80 for Sonnet and $13.61 for Opus. A
 probe that meets rejections stops early and costs less. The `--dry-run` output gives the figure for your
 settings.
 
