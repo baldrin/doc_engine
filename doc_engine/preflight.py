@@ -175,8 +175,9 @@ def bucket_bounds(records: list[dict], rate: float) -> dict | None:
         return max(0.0, level - rate * (t - at))
 
     sends = [r["sent_s"] for r in ok if r["sent_s"] < t_rej]
-    low = max((in_use(t) for t in sends), default=0.0)
-    high = in_use(t_rej)
+    # Replies arrive in bursts, so the amount in use can have been a little higher at an accepted call than it
+    # was at the first rejected one. The two figures are reported in order either way.
+    low, high = sorted((max((in_use(t) for t in sends), default=0.0), in_use(t_rej)))
     first_done = done[0]["done_s"] if done else t_rej
     recent = [r for r in done if r["done_s"] > t_rej - 2.0]
     window = min(2.0, max(0.1, t_rej - first_done))
