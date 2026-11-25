@@ -342,6 +342,15 @@ export function fmtClock(sec: number): string {
   const m = Math.floor(s / 60);
   return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
+/** A clock time for a job: "12:40:05" today, "24 Nov, 12:40:05" on any other day. */
+export function fmtWhen(iso: string | null | undefined): string {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "-";
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  if (d.toDateString() === new Date().toDateString()) return time;
+  return `${d.toLocaleDateString([], { day: "numeric", month: "short" })}, ${time}`;
+}
 export function fmtSecs(sec: number | null | undefined): string {
   if (sec == null) return "-";
   if (sec < 60) return `${sec.toFixed(sec < 10 ? 1 : 0)} s`;

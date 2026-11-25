@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useState } from "react";
-import { api, Job, navigate, pageRanges } from "./lib";
+import { api, fmtSecs, fmtWhen, Job, navigate, pageRanges } from "./lib";
 import { Icon, Link, toast, TopBar } from "./ui";
 
 interface OutItem { pages: number[]; text: string | null; data: any; truncated: boolean; input: string | null }
@@ -144,6 +144,14 @@ export default function Results({ jobId }: { jobId: string }) {
         <div className="results-main">
           {!data ? <p className="empty">Loading results…</p> : null}
           {data && data.state !== "done" ? <div className="notice">This run is {data.state}. Results shown here may be incomplete.</div> : null}
+          {job ? (
+            <div className="vals">
+              <span>Submitted <b className="mono">{fmtWhen(job.submitted_at)}</b></span><span>·</span>
+              <span>Started <b className="mono">{fmtWhen(job.started_at)}</b></span><span>·</span>
+              <span>Finished <b className="mono">{fmtWhen(job.finished_at)}</b></span>
+              {job.finished_at ? <><span>·</span><span>Took <b className="mono">{fmtSecs(job.wall_s)}</b></span></> : null}
+            </div>
+          ) : null}
           {data?.values?.length ? (
             <div className="vals"><span>Ran with</span>{data.values.map((v) => <span className="pill gray" key={v.name} title={`${v.name}: ${v.text}`}>{v.name}: {v.text}</span>)}</div>
           ) : null}

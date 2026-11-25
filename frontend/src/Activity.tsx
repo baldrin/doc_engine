@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, ApiError, Doc, docSize, Flow, fmtClock, fmtInt, inputsFor, Job, navigate, Quota, useConfig, useInterval, ValueInput } from "./lib";
+import { api, ApiError, Doc, docSize, Flow, fmtClock, fmtInt, fmtWhen, inputsFor, Job, navigate, Quota, useConfig, useInterval, ValueInput } from "./lib";
 import { loadValues, missingValues, saveValues, Values, ValuesForm, valuesToSend } from "./Values";
 import { ModelGauges } from "./Run";
 import { Icon, Modal, toast, TopBar } from "./ui";
@@ -126,7 +126,7 @@ export default function Activity() {
               <div style={{ padding: "16px 18px 6px" }}><span className="caps">Jobs</span></div>
               <div style={{ overflowX: "auto" }}>
                 <table className="table">
-                  <thead><tr><th>Queue</th><th>Job</th><th>Priority</th><th>Status</th><th style={{ minWidth: 150 }}>Progress</th><th className="num">In flight</th><th className="num">Rejections</th><th className="num">Time</th><th><span className="sr">Actions</span></th></tr></thead>
+                  <thead><tr><th>Queue</th><th>Job</th><th>Priority</th><th>Status</th><th style={{ minWidth: 150 }}>Progress</th><th className="num">In flight</th><th className="num">Rejections</th><th className="num">Submitted</th><th className="num">Finished</th><th className="num">Time</th><th><span className="sr">Actions</span></th></tr></thead>
                   <tbody>
                     {jobs.map((j) => {
                       const pct = j.state === "done" ? 100 : j.tasks_total ? (j.tasks_done / j.tasks_total) * 100 : 0;
@@ -143,6 +143,8 @@ export default function Activity() {
                             <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>{fmtInt(j.tasks_done)}/{fmtInt(j.tasks_total)}</span></div></td>
                           <td className="num">{j.in_flight || ""}</td>
                           <td className="num" style={{ color: j.rejections ? "var(--red)" : "var(--muted)" }}>{j.rejections}</td>
+                          <td className="num" style={{ whiteSpace: "nowrap" }} title={j.started_at ? `First call started ${fmtWhen(j.started_at)}` : "No call has started yet"}>{fmtWhen(j.submitted_at)}</td>
+                          <td className="num" style={{ whiteSpace: "nowrap" }}>{fmtWhen(j.finished_at)}</td>
                           <td className="num">{fmtClock(j.wall_s)}</td>
                           <td onClick={(e) => e.stopPropagation()}>
                             {j.state === "queued" || j.state === "running"
@@ -151,7 +153,7 @@ export default function Activity() {
                         </tr>
                       );
                     })}
-                    {!jobs.length ? <tr><td colSpan={9} style={{ color: "var(--muted)", padding: 20 }}>No jobs yet. Submit one on the right, or start a test run from a flow.</td></tr> : null}
+                    {!jobs.length ? <tr><td colSpan={11} style={{ color: "var(--muted)", padding: 20 }}>No jobs yet. Submit one on the right, or start a test run from a flow.</td></tr> : null}
                   </tbody>
                 </table>
               </div>

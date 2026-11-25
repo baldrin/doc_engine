@@ -80,6 +80,8 @@ submitted from this screen, and jobs started by callers of the public endpoint o
 | **Progress** | A bar and two numbers: model calls done out of the calls planned so far. The second number grows as later steps of the flow are planned; see [the Run screen](run-screen.md#the-top-bar). The bar is purple for an interactive job, blue for a bulk job, green when the job is done, and red when it failed or was cancelled. |
 | **In flight** | How many of the job's calls are out at the gateway now. Empty when there are none. |
 | **Rejections** | How many of the job's calls the gateway rejected for exceeding a rate limit. Red when above zero. A rejected call is sent again, so rejections slow a job without failing it. |
+| **Submitted** | The clock time the job was accepted, to the second, in your browser's time zone. A job from another day also shows its date. Hover over it to see when the job's first call started. |
+| **Finished** | The clock time the job ended: done, failed or cancelled. A dash while the job is still going. |
 | **Time** | Minutes and seconds from the moment the job was submitted until it ended, or until now if it is still going. Time spent waiting in the queue is included. |
 | The last column | A **Cancel** button on every job that is queued or running. See [Cancel a job](#cancel-a-job). |
 

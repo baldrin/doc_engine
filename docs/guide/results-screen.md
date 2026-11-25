@@ -10,6 +10,7 @@ how to check them against the files, and how to take them away. It is for anyone
 
 - [Open the results](#open-the-results)
 - [The top bar](#the-top-bar)
+- [When the run happened](#when-the-run-happened)
 - [Ran with: the values of the run](#ran-with-the-values-of-the-run)
 - [Outputs](#outputs)
 - [Text outputs](#text-outputs)
@@ -41,6 +42,19 @@ had finished are shown.
 | The title | The name of the file the job read. For a job on several files, the names of the flow's inputs, such as **Purchase order, Delivery note, Invoice**; hover to read the file names. |
 | The tag beside the title | The flow's name and the version the job was started from, for example **Medical record summary · v1**. |
 | **Back to the run** | Opens the [Run screen](run-screen.md) of this job, wherever you came from. |
+
+## When the run happened
+
+A line under the top bar gives the times of the run, in your browser's time zone:
+
+| Label | Meaning |
+|---|---|
+| **Submitted** | When the job was accepted. |
+| **Started** | When its first call was let through. The gap after **Submitted** is time spent waiting in the queue. |
+| **Finished** | When the job ended. A dash while it is still going. |
+| **Took** | From **Submitted** to **Finished**. Shown once the job has ended. |
+
+A time on another day also shows its date.
 
 ## Ran with: the values of the run
 
