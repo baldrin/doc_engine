@@ -24,7 +24,7 @@ The facts in this section were measured in the proof of concept on Sonnet 5.5, o
 |---|---|
 | Start of a call | Nothing is reserved. The gateway does not set aside the call's max output tokens. |
 | End of a call | The actual output is charged when the call completes. |
-| Shape of the limiter | A token bucket that refills continuously at the output limit divided by 60 per second: 1,667 tokens per second at 100,000 per minute. Its capacity is about 40,000 tokens. The capacity was inferred from two probe runs, not read from the gateway. |
+| Shape of the limiter | A token bucket that refills continuously at the output limit divided by 60 per second: 1,667 tokens per second at 100,000 per minute. The proof of concept inferred a capacity of about 40,000 tokens. The bucket probe of 2026-11-25 measured more: see the note below. |
 | A burst | The gateway accepts calls blindly for about one call duration, because none of them has been charged yet. When they complete and are charged, it rejects for about 10 seconds. |
 | A rejection (HTTP 429) | The body holds only an error code and a message. There is no retry time and no retry header. The limit that was hit can be read only from the message text. |
 | Cache reads | Do not count against the input limit. Cache writes do. |
@@ -32,7 +32,9 @@ The facts in this section were measured in the proof of concept on Sonnet 5.5, o
 
 The consequence of the first two rows is that the gateway cannot protect a caller from itself. A client that sends everything at once is accepted, then punished a call duration later. The protection has to be on the client's side, and it has to look ahead: it must count calls that are in flight but not yet charged.
 
-> **Not yet confirmed:** these facts are for Sonnet 5.5. For Haiku 5.5 and Opus 5.5 the bucket has not been measured, and the configured values for those models are placeholders copied from Sonnet. They are to be measured with `python -m doc_engine probe bucket --model NAME` in the first session against the real gateway.
+The bucket probe (`python -m doc_engine probe bucket --model NAME`) measured each model's bucket on the real gateway on 2026-11-25, one run per model at a slow call rate: about 22,000 tokens for Haiku 5.5 (limit 20,000 a minute), about 67,000 for Sonnet 5.5 and about 55,000 for Opus 5.5 (limit 100,000 a minute each). The capacity is not read from the gateway; it is inferred from where rejections begin.
+
+> **Not yet confirmed:** two earlier runs that day, at ten calls a second, met rejections much sooner (Opus at about 16,000, Haiku at about 7,000 twenty minutes after a first saturating run). Either the gateway also weighs calls in flight, or it recovers from a large overshoot more slowly than its per-minute rate. Neither has been established. The other rows of the table were measured on Sonnet 5.5 only.
 
 ## The ledger's model of it
 

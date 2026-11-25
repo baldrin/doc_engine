@@ -178,7 +178,7 @@ the quota is wrong.
 | Another application is using the same endpoint. The ledger cannot see its use. | Rejections come and go without relation to your own load. | Raise `ledger.safety_margin_fraction`, or agree on times with the other users. |
 | A saturating run or a bucket probe finished less than a minute ago, or the application was restarted during heavy use. | Rejections at the start of a run, then none. | Leave at least a minute between saturating runs. |
 | The limits in the settings are higher than the endpoint's. | Rejections whenever the load is high. | Correct `itpm`, `otpm` and `qph`, then [re-size the model](settings.md#re-sizing-a-model). |
-| The model's budget is a placeholder. | The model is Haiku or Opus and has not been probed. | Run `probe bucket` for it. |
+| The model's budget does not match the endpoint. | The model was added without a probe, or the endpoint's limits changed. | Run `probe bucket` for it. |
 | `capacity_mode` is `fixed` and the calls are much shorter than the 9 seconds the fixed cap is tuned for. With much shorter calls the fixed cap admits too much. | Rejections on steps with short calls. | Raise `ledger.safety_margin_fraction`, or try `duration` mode, which adapts to the call length. |
 | A step is new, so the ledger still counts its calls at the step's configured expected output. | Rejections in the first calls of a new step that writes more than expected. | Nothing: after three calls the learned figure is used. |
 

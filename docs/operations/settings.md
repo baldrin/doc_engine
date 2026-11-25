@@ -63,8 +63,8 @@ One entry per model. The key (`haiku`, `sonnet`, `opus`) is the name [steps](../
 | `itpm` | `1000000` (`200000` for Haiku) | The endpoint's input tokens per minute for this model. | When the endpoint tier changes. |
 | `otpm` | `100000` (`20000` for Haiku) | The endpoint's output tokens per minute for this model. The ledger drains at this rate. | When the endpoint tier changes. Then [re-size the model](#re-sizing-a-model). |
 | `qph` | `360000` | Queries per hour. The ledger stops admitting when the last hour's admissions reach it. It counts whole minutes, so it may count up to one minute more than the hour, which errs on the safe side. `0` or absent turns the check off. | When the endpoint tier changes. |
-| `bucket_capacity_output` | `45000` (`8000` for Haiku) | The output cap in `fixed` capacity mode, before the safety margin. | Only from a reviewed bucket probe result. |
-| `bucket_measured` | `40000` (`8000` for Haiku) | The gateway's own output bucket, used in `duration` capacity mode. Falls back to `bucket_capacity_output`, then `otpm`. | After a bucket probe: the probe prints the value to set. |
+| `bucket_capacity_output` | `45000` (`20000` for Haiku) | The output cap in `fixed` capacity mode, before the safety margin. | Only from a reviewed bucket probe result. |
+| `bucket_measured` | `66000` for Sonnet, `55000` for Opus, `21700` for Haiku | The gateway's own output bucket, used in `duration` capacity mode. Falls back to `bucket_capacity_output`, then `otpm`. | After a bucket probe: the probe prints the value to set. |
 | `thinking_off` | per model | How "thinking off" is sent to this model: `disabled`, `between_tools` or `effort_low`. | When preflight says the model refuses its form; preflight prints the line to set. |
 | `cache_min_tokens` | `1024` or `4096` | The model's minimum cacheable prompt size. A shorter static prompt is not marked for caching and gets no warm-up. | When the model's minimum changes. |
 | `input_tokens_per_page` | `1728` | Estimated input tokens for one PDF page, used in estimates and admission. Images and text files carry their own figure. | When measured page costs differ on your files. |
@@ -74,9 +74,9 @@ What is and is not measured for the shipped values:
 
 | Model | `thinking_off` | Budget values |
 |---|---|---|
-| `sonnet` | `between_tools`. This model answers `{"type": "disabled"}` with a 400. | `bucket_capacity_output: 45000` gave no rejections in six runs, and the gateway's own bucket is about 40,000: measured in the proof of concept on Sonnet 5.5. |
-| `haiku` | `disabled` | `itpm: 200000` and `otpm: 20000` are the endpoint's limits for this model. `bucket_capacity_output: 8000` and `bucket_measured: 8000` are an estimate (the same share of OTPM as Sonnet's measured bucket), not a measurement. `qph` is copied from Sonnet. |
-| `opus` | `effort_low`. Thinking cannot be turned off on this model, so "off" sends the lowest effort. | Placeholders copied from Sonnet. |
+| `sonnet` | `between_tools`. This model answers `{"type": "disabled"}` with a 400. | `bucket_capacity_output: 45000` gave no rejections in six runs of the proof of concept on Sonnet 5.5. `bucket_measured: 66000` is from the bucket probe of 2026-11-25 (between 66,152 and 68,400); the proof of concept had inferred about 40,000. |
+| `haiku` | `disabled` | `itpm: 200000` and `otpm: 20000` are the endpoint's limits for this model. `bucket_measured: 21700` is from the bucket probe of 2026-11-25 (between 21,768 and 22,518). `bucket_capacity_output: 20000` is set a little under it and has not been run under load. `qph` is copied from Sonnet. |
+| `opus` | `effort_low`. Thinking cannot be turned off on this model, so "off" sends the lowest effort. | `itpm` and `otpm` are the endpoint's limits. `bucket_measured: 55000` is from the bucket probe of 2026-11-25. `bucket_capacity_output: 45000` is under it and has not been run under load. |
 
 > **Not yet confirmed:** the Haiku bucket values, the Opus budgets, and all three `thinking_off` forms as sent by this
 > codebase. Preflight checks the forms in the [first session on the real gateway](first-real-session.md); `probe bucket` measures the Haiku and Opus

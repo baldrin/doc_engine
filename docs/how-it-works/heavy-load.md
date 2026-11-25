@@ -114,7 +114,7 @@ Measured in the proof of concept on Sonnet 5.5:
 
 - another application uses the same model quota, which the engine cannot see;
 - calls produce much more than their expected output, beyond what the safety margin covers;
-- the configured bucket does not match the model. The Haiku and Opus values are placeholders;
+- the configured bucket does not match the model. Each model's bucket was measured once, on 2026-11-25, and the Haiku and Opus limits have not been run under load;
 - calls are much longer or shorter than the 9 seconds the `fixed` cap was tuned for.
 
 > **Not yet confirmed:** this codebase has not called the real gateway. The zero-rejection result belongs to the proof of concept's scheduler, whose ledger rule this code re-implements. A ten-job run is planned for the first session against the real gateway.

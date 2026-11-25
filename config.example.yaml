@@ -13,9 +13,8 @@ gateway:
   max_request_mb: 16             # checked before sending. Measured ceiling is between 18.3 and 23.5 MB.
 
 # One budget per model. The engine never shares a budget between models.
-# Sonnet 5.5 values were measured on the gateway (2026-11-14 to 16). Haiku's per-minute limits are the
-# endpoint's own; its bucket values, and all Opus values, are PLACEHOLDERS until
-# `python -m doc_engine probe bucket --model <name>` has been run for them.
+# The per-minute limits are the endpoint's own. bucket_measured for all three models comes from
+# `python -m doc_engine probe bucket --model <name>` on the gateway, 2026-11-25: one run per model.
 models:
   haiku:
     label: "Claude Haiku"
@@ -23,8 +22,8 @@ models:
     itpm: 200000                   # the endpoint's limit for this model (given by the owner, 2026-11-18)
     otpm: 20000                    # the endpoint's limit for this model (given by the owner, 2026-11-18)
     qph: 360000                    # PLACEHOLDER (Sonnet's value)
-    bucket_capacity_output: 8000   # PLACEHOLDER: an estimate, not a measurement. Sonnet's bucket is about 40% of its
-    bucket_measured: 8000          #   OTPM; this assumes the same share. Replace both after `probe bucket --model haiku`.
+    bucket_capacity_output: 20000  # a little under the measurement. Not yet run under load.
+    bucket_measured: 21700         # probe of 2026-11-25: between 21,768 and 22,518
     thinking_off: disabled       # how "thinking off" is sent: disabled | between_tools | effort_low
     cache_min_tokens: 4096       # shorter static prompts are not cached, so no warm-up is sent
     input_tokens_per_page: 1728
@@ -35,8 +34,8 @@ models:
     itpm: 1000000
     otpm: 100000
     qph: 360000
-    bucket_capacity_output: 45000  # validated: 0 rejections in six runs. The gateway's own bucket is about 40K.
-    bucket_measured: 40000
+    bucket_capacity_output: 45000  # validated in the proof of concept: 0 rejections in six runs
+    bucket_measured: 66000         # probe of 2026-11-25: between 66,152 and 68,400 (the proof of concept inferred about 40K)
     thinking_off: between_tools  # {"type": "disabled"} returns 400 on this model
     cache_min_tokens: 1024
     input_tokens_per_page: 1728  # probe 7: 1,832 for a 1-page window, 1,623 per page in 4-page windows
@@ -47,8 +46,8 @@ models:
     itpm: 1000000
     otpm: 100000
     qph: 360000
-    bucket_capacity_output: 45000  # PLACEHOLDER
-    bucket_measured: 40000
+    bucket_capacity_output: 45000  # under the measurement. Not yet run under load.
+    bucket_measured: 55000         # probe of 2026-11-25: about 55,000
     thinking_off: effort_low     # thinking cannot be turned off on this model; "off" sends the lowest effort
     cache_min_tokens: 4096
     input_tokens_per_page: 1728
