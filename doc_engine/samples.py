@@ -568,7 +568,8 @@ def medical_flow() -> dict:
         _node("source", "source", 40, 225, {"title": "Patient record", "kind": "single", "default_document": "doc_sample_medical_150"}),
         _node("summarize", "step", 340, 70, {
             "title": "Summarize window", "system": SUMMARIZE_SYSTEM, "instructions": SUMMARIZE_INSTR, "model": "sonnet",
-            "max_tokens": 1500, "expected_output": 900, "thinking": "off", "output": {"type": "text", "fields": []},
+            # On the real gateway (2026-11-25) Sonnet wrote about 1,370 tokens a window, close to the earlier limit of 1,500.
+            "max_tokens": 2500, "expected_output": 1400, "thinking": "off", "output": {"type": "text", "fields": []},
             "track_pages": True}),
         _node("final", "step", 640, 70, {
             "title": "Final summary", "system": FINAL_SYSTEM, "instructions": FINAL_INSTR, "model": "opus",
