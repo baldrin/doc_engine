@@ -768,5 +768,7 @@ def serve(cfg: Section) -> int:
     port = int(os.environ.get("DATABRICKS_APP_PORT") or os.environ.get("PORT") or cfg.server.get("port", 8000))
     host = cfg.server.get("host", "0.0.0.0")
     print(f"Document Engine on http://{'localhost' if host == '0.0.0.0' else host}:{port}")
-    uvicorn.run(create_app(cfg), host=host, port=port, log_level="warning")
+    # Open event streams (a browser on Activity or a Run screen) never end by themselves: without a limit,
+    # Ctrl+C would wait for them for ever.
+    uvicorn.run(create_app(cfg), host=host, port=port, log_level="warning", timeout_graceful_shutdown=3)
     return 0
